@@ -1,86 +1,174 @@
 /**
  * @fileoverview API Route handler for initiating Let's Encrypt certificate renewal.
- *
- * !! IMPORTANT !!
- * This is a PLACEHOLDER route. It simulates the interaction with a backend service
- * that would perform the actual ACME certificate renewal.
- * The real implementation requires:
- * - An ACME client library.
- * - Access to the stored ACME account key.
- * - Access to the stored configuration for the domain (original challenge type, DNS credentials if DNS-01).
- * - Logic to re-perform the necessary challenge (HTTP-01 or DNS-01).
- * - Secure storage for the renewed certificate and private key.
- * - Error handling.
+ * NOTE: The ACME protocol does not have a specific "renew" action. Renewal is
+ * essentially requesting a *new* certificate for the same domain(s) before the
+ * old one expires. This route will re-use the generation logic.
+ * It might need enhancement to fetch stored configuration (like original challenge type
+ * and DNS keys if applicable) instead of requiring them in the request.
  */
 
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import type { Certificate } from '@/services/cert-magic'; // Use types from service
+import acme from 'acme-client';
+import { getAcmeClient, challengeCreateDns01, challengeRemoveDns01, challengeCreateHttp01, challengeRemoveHttp01, challengeValidate } from '@/lib/acme-client';
+import { storeCertificate, retrieveCertificate } from '@/lib/acme-storage'; // Need to potentially retrieve old config/key
+import type { DnsConfig, Certificate } from '@/services/cert-magic';
 
-// Define the expected request body structure
+// For renewal, we ideally only need the domain. The backend *should*
+// retrieve the necessary configuration (original challenge type, DNS keys if DNS-01)
+// from its secure storage based on the domain.
+// However, for simplicity in this example, we might require the original challenge type
+// and potentially DNS config again if it wasn't stored securely.
 interface RenewRequestBody {
     domain: string;
+    // Ideally, backend looks these up:
+    // originalChallengeType?: 'dns-01' | 'http-01';
+    // dnsConfig?: DnsConfig; // Only if original was DNS-01 and creds weren't stored
 }
 
 export async function POST(request: NextRequest) {
-  try {
-    const body: RenewRequestBody = await request.json();
-    const { domain } = body;
+    try {
+        const body: RenewRequestBody = await request.json();
+        const { domain } = body; // Add challengeType, dnsConfig if needed based on backend storage strategy
 
-    console.log(`API: Received renewal request for ${domain}`);
+        console.log(`API: Received renewal request for ${domain}`);
 
-    if (!domain) {
-      return NextResponse.json({ error: 'Missing domain' }, { status: 400 });
+        if (!domain) {
+            return NextResponse.json({ error: 'Missing domain' }, { status: 400 });
+        }
+
+        // --- PLACEHOLDER: Retrieve Stored Configuration ---
+        // In a real app, you would fetch the config associated with this domain.
+        // This includes the original challenge type and potentially encrypted DNS creds.
+        console.warn(`Renewal for ${domain}: Backend needs to retrieve stored config (challenge type, DNS keys if DNS-01). Simulating DNS-01 for now if not 'http-fail'.`);
+        // For simulation, let's *assume* we know the type and have creds if DNS-01
+        // This is a MAJOR simplification.
+        let challengeType: 'dns-01' | 'http-01' = 'dns-01'; // Default assumption
+        let dnsConfig: DnsConfig | undefined = undefined; // Assume creds are available backend-side
+
+        // Example: Fetch from a hypothetical DB/store
+        // const storedConfig = await getStoredDomainConfig(domain);
+        // if (!storedConfig) {
+        //     return NextResponse.json({ error: `No configuration found for domain ${domain} to renew.` }, { status: 404 });
+        // }
+        // challengeType = storedConfig.challengeType;
+        // if (challengeType === 'dns-01') {
+        //     dnsConfig = await decryptAndRetrieveDnsCredentials(storedConfig.dnsProvider, storedConfig.credentialsRef);
+        //     if (!dnsConfig) {
+        //         return NextResponse.json({ error: `Could not retrieve DNS credentials for ${domain}.` }, { status: 500 });
+        //     }
+        // }
+
+         // --- Simulate based on domain name for testing ---
+         if (domain.includes("http-domain")) {
+             challengeType = 'http-01';
+             dnsConfig = undefined;
+             console.log(`Simulating renewal with HTTP-01 for ${domain}`);
+         } else {
+             // Assume DNS-01 and *simulate* having credentials
+             challengeType = 'dns-01';
+             dnsConfig = { provider: 'cloudflare', apiKey: 'SIMULATED_DUMMY_API_KEY_FOR_RENEWAL' }; // !! REPLACE with actual retrieved/decrypted key
+             console.log(`Simulating renewal with DNS-01 for ${domain} using ${dnsConfig.provider}`);
+             if (!process.env.NODE_ENV || process.env.NODE_ENV === 'development') {
+                 console.warn("Using SIMULATED API key for renewal. Replace with real key retrieval.");
+             }
+         }
+         // --- End Simulation ---
+
+
+        // --- Re-use Generation Logic ---
+        // Renewal is just generating a new certificate.
+        console.log(`Proceeding with ${challengeType} challenge for renewal.`);
+
+        const client = await getAcmeClient();
+
+        /* Create NEW CSR for renewal - reusing old key is possible but less secure */
+        console.log(`Generating NEW CSR for renewal: ${domain}`);
+        const [newKey, csr] = await acme.crypto.createCsr({
+            commonName: domain,
+        });
+        const newPrivateKeyPem = newKey.toString(); // Use a new private key for the renewed cert
+
+        /* Create order */
+        console.log('Creating certificate order for renewal...');
+        const order = await client.createOrder({
+            identifiers: [{ type: 'dns', value: domain }],
+        });
+
+        /* Authorizations and Challenge */
+        const authorizations = await client.getAuthorizations(order);
+        if (!authorizations || authorizations.length === 0) throw new Error('No authorizations found.');
+        const authorization = authorizations[0];
+
+        const challenge = authorization.challenges.find((chall) => chall.type === challengeType);
+        if (!challenge) throw new Error(`Could not find challenge type ${challengeType}`);
+
+        /* Challenge handlers */
+        let challengeCreateFn: acme.ChallengeCreateFn;
+        let challengeRemoveFn: acme.ChallengeRemoveFn;
+
+        if (challengeType === 'dns-01') {
+             if (!dnsConfig) throw new Error("Internal error: dnsConfig missing for DNS-01 renewal."); // Should be caught earlier
+             const boundDnsConfig = dnsConfig; // Closure capture
+             challengeCreateFn = (opts) => challengeCreateDns01({ ...opts, dnsConfig: boundDnsConfig });
+             challengeRemoveFn = (opts) => challengeRemoveDns01({ ...opts, dnsConfig: boundDnsConfig });
+        } else {
+            challengeCreateFn = challengeCreateHttp01;
+            challengeRemoveFn = challengeRemoveHttp01;
+        }
+
+        /* Satisfy challenge */
+        console.log('Attempting to satisfy challenge for renewal...');
+        await client.challenge({
+            challenge: challenge,
+            challengeCreateFn: challengeCreateFn,
+            challengeValidateFn: challengeValidate,
+            challengeRemoveFn: challengeRemoveFn,
+        });
+
+        /* Finalize order */
+        console.log('Challenge completed, finalizing renewal order...');
+        const finalizedOrder = await client.finalizeOrder(order, csr);
+
+        /* Get NEW certificate */
+        console.log('Downloading renewed certificate...');
+        const renewedCertificatePem = await client.getCertificate(finalizedOrder);
+        console.log('Renewed certificate downloaded.');
+
+        // --- Store the RENEWED certificate and NEW key ---
+        // Overwrite the old files with the new ones.
+        await storeCertificate(domain, renewedCertificatePem, newPrivateKeyPem);
+
+        // --- Prepare response ---
+        const expiryDate = acme.crypto.readCertificateInfo(renewedCertificatePem).notAfter;
+
+        const renewedCertificateResult: Certificate = {
+            domain: domain,
+            certificatePem: renewedCertificatePem,
+            privateKeyPem: newPrivateKeyPem, // Send the NEW private key (Still insecure!)
+            challengeType: challengeType, // Reflects method used for *this* renewal
+            expiresAt: expiryDate,
+            message: `Certificate for ${domain} renewed successfully via ${challengeType}. Expires: ${expiryDate.toLocaleDateString()}. Check server storage.`,
+        };
+
+        console.log(`API: Successfully renewed certificate for ${domain}.`);
+        return NextResponse.json(renewedCertificateResult, { status: 200 });
+
+    } catch (error: any) {
+        console.error('API Error in /api/renew-certificate:', error);
+        let errorMessage = 'Failed to renew certificate.';
+        if (error instanceof Error) {
+            errorMessage = error.message;
+        } else if (typeof error === 'string') {
+            errorMessage = error;
+        }
+         if (error.response && error.response.data && error.response.data.detail) {
+            errorMessage = `ACME Server Error during renewal: ${error.response.data.detail}`;
+        } else if (error.message && error.message.includes('Verify error')) {
+            errorMessage = `ACME challenge verification failed during renewal. Details: ${error.message}`;
+        }
+
+        console.error('Detailed Renewal Error:', JSON.stringify(error, null, 2));
+        return NextResponse.json({ error: errorMessage }, { status: 500 });
     }
-
-    // --- Placeholder/Simulation Logic ---
-    // In a real implementation, this is where you would:
-    // 1. Look up the certificate details and stored configuration for the domain.
-    // 2. Determine the original challenge type used.
-    // 3. If DNS-01, retrieve stored, encrypted DNS credentials.
-    // 4. Initiate the ACME renewal process using a client library.
-    //    - Load ACME account.
-    //    - Request renewal (often similar to new order).
-    //    - Handle challenges (same as generation, potentially reusing credentials/setup).
-    //    - Finalize order.
-    //    - Obtain renewed certificate. (Private key might remain the same or be regenerated).
-    // 5. Securely update the stored certificate and private key.
-    // 6. Reset renewal timer/schedule.
-    // 7. Return success response.
-
-    // Simulate processing delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
-
-     // Simulate potential failure based on domain name (for testing)
-    if (domain.includes("renew-fail")) {
-        console.error(`API: Simulating renewal failure for domain ${domain}`);
-        return NextResponse.json({ error: `Simulated failure renewing certificate for ${domain}. Check backend logs.` }, { status: 500 });
-    }
-
-    // Simulate success (assuming original was DNS-01 for simplicity here)
-    const expiry = new Date();
-    expiry.setDate(expiry.getDate() + 90);
-
-    // Fetch or determine original challenge type from stored config
-    // For simulation, let's assume it was DNS-01 if not 'http-fail'
-    const challengeType = domain.includes("http-fail") ? 'http-01' : 'dns-01';
-
-    const simulatedRenewedCertificate: Certificate = {
-        domain: domain,
-        // SECURITY WARNING: Use placeholders. Real cert/key handled server-side.
-        certificatePem: `-----BEGIN CERTIFICATE-----\nMIID...[Simulated RENEWED Cert for ${domain}]...END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIID...[Simulated Intermediate CA]...END CERTIFICATE-----`,
-        privateKeyPem: `-----BEGIN PRIVATE KEY-----\nMIID...[Simulated Private Key for ${domain} - might be same or new]...END PRIVATE KEY-----`, // Often the same key is reused, but can be new.
-        challengeType: challengeType, // Should reflect original method
-        expiresAt: expiry,
-        message: `Certificate for ${domain} renewed successfully.`,
-    };
-
-    console.log(`API: Successfully simulated certificate renewal for ${domain}`);
-    return NextResponse.json(simulatedRenewedCertificate, { status: 200 });
-
-  } catch (error) {
-    console.error('API Error in /api/renew-certificate:', error);
-    const errorMessage = error instanceof Error ? error.message : 'An unknown server error occurred.';
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
-  }
 }
