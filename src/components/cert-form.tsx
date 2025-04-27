@@ -28,7 +28,7 @@ import {
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { generateCertificate, type DnsConfig, type CertificateResult, type HttpChallengePending, type Certificate } from "@/services/cert-magic";
+import { generateCertificate, type DnsConfig, type CertificateResult } from "@/services/cert-magic"; // Removed unused types
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const ChallengeType = z.enum(["dns-01", "http-01"]);
@@ -71,8 +71,7 @@ type CertFormValues = z.infer<typeof formSchema>;
 
 interface CertFormProps {
   onCertificateGenerated: (result: CertificateResult | null, error?: string) => void; // Updated type
-  isLoading: boolean;
-  setIsLoading: (loading: boolean) => void;
+  // Removed isLoading and setIsLoading props
 }
 
 // Supported DNS providers (ensure backend supports these identifiers)
@@ -84,8 +83,10 @@ const dnsProviders = [
   // { value: "other", label: "Other (Manual/Unsupported)" },
 ];
 
-export function CertForm({ onCertificateGenerated, isLoading, setIsLoading }: CertFormProps) {
+export function CertForm({ onCertificateGenerated }: CertFormProps) {
   const { toast } = useToast();
+  // Local state for submission loading
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
 
   const form = useForm<CertFormValues>({
     resolver: zodResolver(formSchema),
@@ -101,7 +102,7 @@ export function CertForm({ onCertificateGenerated, isLoading, setIsLoading }: Ce
   const watchedChallengeType = form.watch("challengeType");
 
   async function onSubmit(values: CertFormValues) {
-    setIsLoading(true);
+    setIsSubmitting(true); // Start loading
     onCertificateGenerated(null); // Clear previous status
 
     let dnsConfig: DnsConfig | undefined = undefined;
@@ -113,7 +114,7 @@ export function CertForm({ onCertificateGenerated, isLoading, setIsLoading }: Ce
                 description: "DNS Provider and API Key are required for DNS-01.",
                 variant: "destructive",
             });
-            setIsLoading(false);
+            setIsSubmitting(false); // Stop loading
             return;
         }
       dnsConfig = {
@@ -143,7 +144,8 @@ export function CertForm({ onCertificateGenerated, isLoading, setIsLoading }: Ce
       } else if (result.status === 'http-01-pending') {
           toastTitle = "Action Required";
           toastDescription = result.message || `HTTP-01 challenge initiated. Please follow instructions displayed below.`;
-          toastVariant = "default"; // Use default for pending, maybe add a specific style later
+          toastVariant = "default"; // Use default for pending
+          // Do NOT reset the form in pending state, user might need the domain info visible
       }
 
       toast({
@@ -152,7 +154,7 @@ export function CertForm({ onCertificateGenerated, isLoading, setIsLoading }: Ce
         variant: toastVariant,
         duration: 15000, // Give more time to read potential instructions
       });
-      onCertificateGenerated(result);
+      onCertificateGenerated(result); // Pass result to parent
 
     } catch (error) {
       console.error("Certificate generation failed:", error);
@@ -162,12 +164,9 @@ export function CertForm({ onCertificateGenerated, isLoading, setIsLoading }: Ce
         description: errorMessage,
         variant: "destructive",
       });
-      onCertificateGenerated(null, errorMessage);
+      onCertificateGenerated(null, errorMessage); // Pass error to parent
     } finally {
-      // Only set loading false if it's not a pending state,
-      // as user action (Verify) will follow.
-      // Let the CertManager handle loading state across steps.
-      // setIsLoading(false); -- Handled by CertManager now
+      setIsSubmitting(false); // Stop loading regardless of outcome
     }
   }
 
@@ -310,8 +309,8 @@ export function CertForm({ onCertificateGenerated, isLoading, setIsLoading }: Ce
           </CardContent>
           <CardFooter>
              {/* Use accent color for primary action button */}
-            <Button type="submit" disabled={isLoading || !form.formState.isValid} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground font-semibold py-3 text-base">
-              {isLoading ? (
+            <Button type="submit" disabled={isSubmitting || !form.formState.isValid} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground font-semibold py-3 text-base">
+              {isSubmitting ? (
                 <>
                   <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                   Processing Request...
@@ -329,3 +328,5 @@ export function CertForm({ onCertificateGenerated, isLoading, setIsLoading }: Ce
     </Card>
   );
 }
+
+    

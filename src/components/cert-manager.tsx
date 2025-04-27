@@ -21,7 +21,7 @@ export default function CertManager() {
   // State can now hold either a final Certificate or pending challenge details
   const [certResult, setCertResult] = React.useState<CertificateResult | null>(null);
   const [error, setError] = React.useState<string | null>(null);
-  const [isLoading, setIsLoading] = React.useState(false); // Unified loading state
+  const [isLoading, setIsLoading] = React.useState(false); // Unified loading state for API calls initiated here
   const { toast } = useToast();
 
   const handleCertificateResult = (
@@ -30,12 +30,13 @@ export default function CertManager() {
   ) => {
     setCertResult(result);
     setError(generationError || null);
-    // isLoading is managed by CertForm for initial generation/renewal start
+    // CertForm manages its own loading state now
+    // CertManager's isLoading is used for Renew, Verify, Finalize actions
   };
 
   // Handler for manual renewal trigger
   const handleRenew = async (certIdentifier: Pick<Certificate, 'domain'>) => {
-     setIsLoading(true);
+     setIsLoading(true); // Start loading for this specific action
      setError(null);
      // Keep current cert displayed or clear based on preference while renewing
      // setCertResult(null);
@@ -77,13 +78,13 @@ export default function CertManager() {
         // Decide whether to clear the cert display or keep the old one
         // setCertResult(null);
      } finally {
-         setIsLoading(false);
+         setIsLoading(false); // Stop loading for this specific action
      }
   };
 
   // Handler for verifying a pending HTTP-01 challenge
   const handleVerifyHttp = async (pendingChallenge: HttpChallengePending) => {
-      setIsLoading(true);
+      setIsLoading(true); // Start loading for this specific action
       setError(null); // Clear previous errors
       toast({
           title: "Verifying HTTP Challenge...",
@@ -102,7 +103,8 @@ export default function CertManager() {
                   variant: "default",
               });
               // Immediately try to finalize
-              await handleFinalize(pendingChallenge); // isLoading remains true until finalize completes
+              // Keep isLoading true until finalize completes or fails
+              await handleFinalize(pendingChallenge);
           } else {
               // This case might not be reached if verifyHttpChallenge throws on invalid status from backend.
               // However, keeping it for robustness.
@@ -113,7 +115,7 @@ export default function CertManager() {
                   variant: "destructive",
                   duration: 15000,
               });
-              setIsLoading(false); // Stop loading only if verification failed at this stage
+              setIsLoading(false); // Stop loading only if verification explicitly failed here
           }
       } catch (verificationError) {
           // Handle errors thrown by verifyHttpChallenge (API errors or explicit invalid status throws)
@@ -127,13 +129,13 @@ export default function CertManager() {
           });
           setIsLoading(false); // Stop loading on error
       }
-      // setIsLoading(false) is called within handleFinalize or if verification fails
+      // setIsLoading(false) is called within handleFinalize or if verification explicitly fails/errors out
   };
 
 
    // Handler for finalizing certificate after successful verification
   const handleFinalize = async (pendingChallenge: HttpChallengePending) => {
-      // setIsLoading should already be true from handleVerifyHttp
+      // setIsLoading should already be true from handleVerifyHttp call
       setError(null);
       toast({
           title: "Finalizing Certificate...",
@@ -178,8 +180,7 @@ export default function CertManager() {
 
       <CertForm
         onCertificateGenerated={handleCertificateResult}
-        isLoading={isLoading}
-        setIsLoading={setIsLoading}
+        // Removed isLoading and setIsLoading props
        />
 
       <CertStatus
@@ -187,7 +188,7 @@ export default function CertManager() {
         error={error}
         onRenew={handleRenew} // Pass the renewal handler
         onVerifyHttp={handleVerifyHttp} // Pass the HTTP verification handler
-        isLoading={isLoading} // Pass unified loading state
+        isLoading={isLoading} // Pass loading state controlled by CertManager for renew/verify/finalize actions
        />
     </div>
   );
