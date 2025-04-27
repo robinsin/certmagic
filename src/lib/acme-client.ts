@@ -1,9 +1,11 @@
+
 /**
  * @fileoverview Initializes and exports a configured ACME client instance.
- * Includes helper functions for common ACME operations like DNS/HTTP challenges.
+ * Includes helper functions for common ACME operations like DNS challenges.
  */
 import acme from 'acme-client';
-import { getAccountKey, storeHttpChallenge, removeHttpChallenge } from './acme-storage'; // Use our storage helper
+import { getAccountKey } from './acme-storage'; // Use our storage helper
+import type { DnsConfig } from '@/services/cert-magic'; // Import DnsConfig type
 
 // --- Configuration ---
 // Use Let's Encrypt staging directory for testing to avoid rate limits
@@ -13,7 +15,7 @@ const LETS_ENCRYPT_DIRECTORY_URL = process.env.NODE_ENV === 'production'
     : acme.directory.letsencrypt.staging;
 
 // Email for Let's Encrypt account (replace with a real email for production)
-const ACCOUNT_EMAIL = process.env.LETS_ENCRYPT_EMAIL || 'test@example.com'; // Use env var or a default
+const ACCOUNT_EMAIL = process.env.LETS_ENCRYPT_EMAIL || 'robinseyi@gmail.com'; // Use env var or a default
 
 let acmeClientInstance: acme.Client | null = null;
 
@@ -65,7 +67,7 @@ export async function getAcmeClient(): Promise<acme.Client> {
     return acmeClientInstance;
 }
 
-// --- Challenge Handlers ---
+// --- DNS Challenge Handlers ---
 
 /**
  * Placeholder for DNS-01 challenge creation.
@@ -82,7 +84,7 @@ export async function challengeCreateDns01(opts: {
     identifier: acme.Identifier;
     challenge: acme.Challenge;
     keyAuthorization: string;
-    dnsConfig: { provider: string; apiKey: string }; // Adjusted to match CertForm
+    dnsConfig: DnsConfig; // Use the imported type
 }): Promise<void> {
     const domain = opts.identifier.value;
     const recordName = `_acme-challenge.${domain}`;
@@ -133,7 +135,7 @@ export async function challengeRemoveDns01(opts: {
     identifier: acme.Identifier;
     challenge: acme.Challenge;
     keyAuthorization: string;
-    dnsConfig: { provider: string; apiKey: string }; // Adjusted
+    dnsConfig: DnsConfig; // Use the imported type
 }): Promise<void> {
     const domain = opts.identifier.value;
     const recordName = `_acme-challenge.${domain}`;
@@ -164,58 +166,19 @@ export async function challengeRemoveDns01(opts: {
     console.log(`DNS-01 Remove: Record removal initiated/logged for ${recordName}.`);
 }
 
+// HTTP-01 challenge functions (challengeCreateHttp01, challengeRemoveHttp01) are removed
+// as the backend no longer directly manages these challenges for the manual flow.
+// The frontend now handles showing the required file/content, and the verification
+// happens via the /api/verify-http-challenge endpoint which calls client.completeChallenge.
+// The serving of the challenge file itself is handled by the user's webserver.
+// We still need the generic /.well-known/acme-challenge/[token] endpoint to serve stored challenges
+// if that mechanism were used, but it's not used by this specific manual flow initiated from the UI.
 
-/**
- * Handles HTTP-01 challenge creation by storing the challenge file content.
- * The actual serving of the file needs to be handled by a separate endpoint
- * (e.g., `/api/acme-challenge/[token]`).
- *
- * @param {object} opts - Options object.
- * @param {acme.Identifier} opts.identifier - The identifier (domain name).
- * @param {acme.Challenge} opts.challenge - The ACME challenge object.
- * @param {string} opts.keyAuthorization - The key authorization string.
- * @returns {Promise<void>}
- */
-export async function challengeCreateHttp01(opts: {
-    identifier: acme.Identifier;
-    challenge: acme.Challenge;
-    keyAuthorization: string;
-}): Promise<void> {
-    const token = opts.challenge.token;
-    const keyAuth = opts.keyAuthorization;
+// The acme-storage functions for HTTP challenges (store/retrieve/removeHttpChallenge)
+// are also removed as they are no longer needed for the manual flow.
 
-    console.log(`HTTP-01 Create: Storing challenge for token: ${token}`);
-    console.log(`HTTP-01 Create: Expected URL: http://${opts.identifier.value}/.well-known/acme-challenge/${token}`);
-    console.log(`HTTP-01 Create: Content: ${keyAuth}`);
+// However, we DO need a way to serve the challenge response if Let's Encrypt asks for it.
+// We add back the `storeHttpChallenge`, `retrieveHttpChallenge`, `removeHttpChallenge`
+// functions in `acme-storage` and the API route `src/app/api/acme-challenge/[token]/route.ts`
+// This route will be used by Let's Encrypt itself to verify the challenge, reading the value we store.
 
-    // Store the token -> keyAuthorization mapping using our storage helper
-    // This will be retrieved by the dedicated challenge serving endpoint.
-    await storeHttpChallenge(token, keyAuth);
-
-    console.log(`HTTP-01 Create: Challenge content stored. Endpoint should be ready.`);
-}
-
-
-/**
- * Handles HTTP-01 challenge removal by deleting the stored challenge file content.
- *
- * @param {object} opts - Options object.
- * @param {acme.Identifier} opts.identifier - The identifier (domain name).
- * @param {acme.Challenge} opts.challenge - The ACME challenge object.
- * @param {string} opts.keyAuthorization - The key authorization string.
- * @returns {Promise<void>}
- */
-export async function challengeRemoveHttp01(opts: {
-    identifier: acme.Identifier;
-    challenge: acme.Challenge;
-    keyAuthorization: string;
-}): Promise<void> {
-    const token = opts.challenge.token;
-
-    console.log(`HTTP-01 Remove: Removing stored challenge for token: ${token}`);
-
-    // Remove the stored challenge file/data
-    await removeHttpChallenge(token);
-
-    console.log(`HTTP-01 Remove: Stored challenge removed.`);
-}

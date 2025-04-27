@@ -1,3 +1,4 @@
+
 /**
  * @fileoverview API route to serve ACME HTTP-01 challenge responses.
  * Retrieves the expected key authorization from storage based on the token in the URL.
