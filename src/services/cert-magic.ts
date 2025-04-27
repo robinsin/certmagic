@@ -1,3 +1,4 @@
+
 /**
  * Represents the DNS configuration required for DNS-01 challenge.
  */
@@ -32,6 +33,15 @@ export interface Certificate {
    */
   privateKeyPath: string; // Placeholder: Path on the server or a secure delivery method
   /**
+   * The challenge type used to obtain this certificate.
+   */
+  challengeType: 'dns-01' | 'http-01';
+  /**
+   * Optional: The DNS configuration used, if challengeType was 'dns-01'.
+   * Stored (conceptually) for renewal purposes.
+   */
+  dnsConfig?: DnsConfig;
+  /**
    * Optional: Estimated expiry date (useful for UI).
    */
   expiresAt?: Date;
@@ -44,26 +54,32 @@ export interface Certificate {
  * Auto-renewal setup happens server-side after successful generation.
  *
  * @param domain The domain name for which to generate the certificate.
- * @param dnsConfig The DNS configuration for DNS-01 challenge (if applicable). API Key is needed server-side.
+ * @param challengeType The ACME challenge type to use ('dns-01' or 'http-01').
+ * @param dnsConfig The DNS configuration for DNS-01 challenge (required only if challengeType is 'dns-01').
  * @returns A promise that resolves to a Certificate object containing the certificate details.
  * @throws Will throw an error if certificate generation fails.
  */
-export async function generateCertificate(domain: string, dnsConfig: DnsConfig): Promise<Certificate> {
-  console.log(`Generating certificate for ${domain} using DNS provider ${dnsConfig.provider}`);
+export async function generateCertificate(domain: string, challengeType: 'dns-01' | 'http-01', dnsConfig?: DnsConfig): Promise<Certificate> {
+  console.log(`Generating certificate for ${domain} using ${challengeType.toUpperCase()} challenge.`);
+
+  if (challengeType === 'dns-01' && !dnsConfig) {
+    throw new Error("DNS configuration is required for DNS-01 challenge.");
+  }
 
   // --- Placeholder Implementation ---
   // In a real application:
-  // 1. Send domain and potentially DNS config (securely) to your backend API.
-  // 2. Backend uses an ACME client (like Certbot, acme.sh, or a library) to interact with Let's Encrypt.
-  // 3. Backend performs HTTP-01 or DNS-01 challenge. For DNS-01, it uses the provided API key to update DNS records.
-  // 4. If successful, backend obtains the certificate and private key.
-  // 5. Backend securely stores the certificate/key and schedules auto-renewal (e.g., using a cron job).
-  // 6. Backend returns success status and possibly *paths* or download links (not the actual private key) to the frontend.
+  // 1. Send domain, challengeType, and potentially DNS config (securely) to your backend API.
+  // 2. Backend uses an ACME client.
+  // 3. If DNS-01: Use API key to update DNS records.
+  // 4. If HTTP-01: Place validation file on the server (requires server setup).
+  // 5. Backend completes challenge, obtains cert/key.
+  // 6. Backend securely stores cert/key and schedules auto-renewal (likely requires DNS-01 for full automation).
+  // 7. Backend returns success status and relevant info.
 
   // Simulate potential failure
   if (domain.includes("fail")) {
       await new Promise(resolve => setTimeout(resolve, 500)); // Simulate processing time
-      throw new Error(`Failed to validate domain ${domain}. Check DNS settings or server configuration.`);
+      throw new Error(`Failed to validate domain ${domain} using ${challengeType.toUpperCase()}. Check ${challengeType === 'dns-01' ? 'DNS settings' : 'server configuration'}.`);
   }
 
    // Simulate success after a delay
@@ -72,38 +88,44 @@ export async function generateCertificate(domain: string, dnsConfig: DnsConfig):
   const expiry = new Date();
   expiry.setDate(expiry.getDate() + 90); // Let's Encrypt certs are valid for 90 days
 
-  console.log(`Certificate generation successful for ${domain}. Auto-renewal scheduled.`);
+  console.log(`Certificate generation successful for ${domain} using ${challengeType.toUpperCase()}. Auto-renewal scheduled (if applicable).`);
 
   return {
     domain: domain,
-    // IMPORTANT: These paths are illustrative. In a real app, how you deliver/store certs depends on your architecture.
+    // IMPORTANT: These paths are illustrative.
     certificatePath: `/etc/letsencrypt/live/${domain}/fullchain.pem`,
     privateKeyPath: `/etc/letsencrypt/live/${domain}/privkey.pem`,
+    challengeType: challengeType,
+    dnsConfig: challengeType === 'dns-01' ? dnsConfig : undefined, // Store config if DNS-01 was used
     expiresAt: expiry,
   };
 }
 
 /**
  * Asynchronously triggers an immediate renewal of a Let's Encrypt certificate.
- * Usually, renewal happens automatically, but this allows manual triggering.
+ * Usually, renewal happens automatically. This allows manual triggering.
+ * The challenge type used for renewal typically matches the original generation method.
  *
- * @param domain The domain name for which to renew the certificate.
- * @param dnsConfig The DNS configuration needed for the renewal challenge (retrieved securely server-side).
+ * @param certificate The existing certificate object containing domain and original challenge info.
  * @returns A promise that resolves to a Certificate object containing the renewed certificate details.
  * @throws Will throw an error if certificate renewal fails.
  */
-export async function renewCertificate(domain: string, dnsConfig: DnsConfig): Promise<Certificate> {
-   console.log(`Manually renewing certificate for ${domain} using DNS provider ${dnsConfig.provider}`);
+export async function renewCertificate(certificate: Certificate): Promise<Certificate> {
+   console.log(`Manually renewing certificate for ${certificate.domain} using original challenge type: ${certificate.challengeType.toUpperCase()}`);
 
    // --- Placeholder Implementation ---
-   // Similar to generateCertificate, this would typically call a backend API.
-   // The backend would retrieve the necessary stored credentials and trigger the renewal process
-   // with the ACME client.
+   // Backend retrieves necessary stored credentials based on the original challenge type (especially DNS config if DNS-01).
+   // Backend triggers renewal with the ACME client.
+
+   // Ensure required config is present for DNS-01 renewal
+   if (certificate.challengeType === 'dns-01' && !certificate.dnsConfig) {
+     throw new Error(`Cannot renew certificate for ${certificate.domain} using DNS-01: Original DNS config is missing.`);
+   }
 
     // Simulate potential failure
-   if (domain.includes("renew-fail")) {
+   if (certificate.domain.includes("renew-fail")) {
        await new Promise(resolve => setTimeout(resolve, 500));
-       throw new Error(`Failed to renew certificate for ${domain}. Please check logs.`);
+       throw new Error(`Failed to renew certificate for ${certificate.domain}. Please check logs.`);
    }
 
     // Simulate success after a delay
@@ -112,12 +134,14 @@ export async function renewCertificate(domain: string, dnsConfig: DnsConfig): Pr
    const expiry = new Date();
    expiry.setDate(expiry.getDate() + 90);
 
-   console.log(`Certificate renewal successful for ${domain}.`);
+   console.log(`Certificate renewal successful for ${certificate.domain}.`);
 
    return {
-     domain: domain,
-     certificatePath: `/etc/letsencrypt/live/${domain}/fullchain.pem`, // Path might remain the same
-     privateKeyPath: `/etc/letsencrypt/live/${domain}/privkey.pem`,   // Path might remain the same
-     expiresAt: expiry,
+     ...certificate, // Keep original info like challenge type and DNS config
+     certificatePath: `/etc/letsencrypt/live/${certificate.domain}/fullchain.pem`, // Path likely remains the same
+     privateKeyPath: `/etc/letsencrypt/live/${certificate.domain}/privkey.pem`,   // Path likely remains the same
+     expiresAt: expiry, // Update expiry date
    };
 }
+
+    

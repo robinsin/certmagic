@@ -1,9 +1,10 @@
+
 "use client";
 
 import * as React from "react";
 import { CertForm } from "@/components/cert-form";
 import { CertStatus } from "@/components/cert-status";
-import { type Certificate, renewCertificate, type DnsConfig } from "@/services/cert-magic"; // Assuming renewCertificate exists
+import { type Certificate, renewCertificate } from "@/services/cert-magic";
 import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Info } from "lucide-react";
@@ -22,31 +23,31 @@ export default function CertManager() {
     setError(generationError || null);
   };
 
-  const handleRenew = async (domain: string) => {
+  const handleRenew = async (certToRenew: Certificate) => {
+     if (!certToRenew) return; // Should not happen if button is shown
+
      setIsLoading(true);
      setError(null); // Clear previous errors
-     setCertificate(null); // Optionally clear current cert display while renewing
+     // Keep current cert display while renewing? Or clear? Let's keep it for now.
+     // setCertificate(null);
+
      toast({
          title: "Renewing Certificate...",
-         description: `Attempting to renew certificate for ${domain}.`,
+         description: `Attempting to renew certificate for ${certToRenew.domain}.`,
      });
 
      try {
-        // TODO: Need a way to get DNS config for renewal.
-        // This might involve storing it securely or asking the user again.
-        // For now, using placeholder config.
-        const placeholderDnsConfig: DnsConfig = { provider: 'cloudflare', apiKey: 'dummy-api-key-placeholder' };
-
+        // The certificate object should contain the necessary info (like original challenge type and DNS config if applicable)
         // Simulate API call delay
         await new Promise(resolve => setTimeout(resolve, 1500));
 
-        // Replace with actual API call when ready
-        const renewedCertificate = await renewCertificate(domain, placeholderDnsConfig);
+        // Pass the existing certificate object to the renewal function
+        const renewedCertificate = await renewCertificate(certToRenew);
 
         setCertificate(renewedCertificate);
         toast({
             title: "Renewal Successful!",
-            description: `Certificate for ${domain} has been renewed.`,
+            description: `Certificate for ${certToRenew.domain} has been renewed.`,
             variant: "default",
         });
 
@@ -54,6 +55,8 @@ export default function CertManager() {
         console.error("Certificate renewal failed:", renewalError);
         const errorMessage = renewalError instanceof Error ? renewalError.message : "An unknown error occurred during renewal.";
         setError(errorMessage);
+        // Restore the previous certificate state in case of failure? Or show error only? Show error only.
+        setCertificate(certToRenew); // Show the old cert again
         toast({
             title: "Renewal Failed",
             description: errorMessage,
@@ -70,7 +73,7 @@ export default function CertManager() {
           <Info className="h-4 w-4 text-primary" />
           <AlertTitle className="text-primary">How Auto-Renewal Works</AlertTitle>
           <AlertDescription>
-            CertMagic securely stores your DNS credentials (encrypted) to automatically handle the DNS-01 challenge required for certificate renewals every 90 days. This ensures your site remains secure without manual intervention. HTTP-01 challenge requires your server to be configured appropriately.
+            CertMagic aims for automatic renewal. For DNS-01 challenge, it securely stores your DNS credentials (encrypted) to handle verification. For HTTP-01, your server must remain configured to serve the challenge files. DNS-01 is recommended for full automation.
           </AlertDescription>
         </Alert>
 
@@ -84,7 +87,10 @@ export default function CertManager() {
         certificate={certificate}
         error={error}
         onRenew={handleRenew} // Pass the renewal handler
+        isLoading={isLoading} // Pass loading state to disable renew button while loading
        />
     </div>
   );
 }
+
+    

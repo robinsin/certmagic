@@ -1,7 +1,8 @@
+
 "use client";
 
 import * as React from "react";
-import { CheckCircle2, AlertCircle, FileText, Key, CalendarDays, RefreshCw } from "lucide-react";
+import { CheckCircle2, AlertCircle, FileText, Key, CalendarDays, RefreshCw, Server, FileCode, Loader2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { type Certificate } from "@/services/cert-magic";
 import { Button } from "@/components/ui/button";
@@ -9,19 +10,23 @@ import { Button } from "@/components/ui/button";
 interface CertStatusProps {
   certificate: Certificate | null;
   error?: string | null;
-  onRenew?: (domain: string) => void; // Optional renew handler
+  onRenew?: (certificate: Certificate) => void; // Pass the full certificate object
+  isLoading?: boolean; // Add isLoading prop
 }
 
-export function CertStatus({ certificate, error, onRenew }: CertStatusProps) {
+export function CertStatus({ certificate, error, onRenew, isLoading = false }: CertStatusProps) {
   if (!certificate && !error) {
     return null; // Don't render anything if there's no status yet
   }
 
-  const getExpiryDate = () => {
-    const now = new Date();
-    // Let's Encrypt certs are typically valid for 90 days
-    now.setDate(now.getDate() + 90);
-    return now.toLocaleDateString();
+  const getExpiryDate = (cert: Certificate | null) => {
+    if (!cert?.expiresAt) {
+      // Fallback if expiresAt is not set
+      const now = new Date();
+      now.setDate(now.getDate() + 90); // Assume 90 days
+      return now.toLocaleDateString();
+    }
+    return new Date(cert.expiresAt).toLocaleDateString();
   }
 
   return (
@@ -39,7 +44,7 @@ export function CertStatus({ certificate, error, onRenew }: CertStatusProps) {
           )}
         </CardTitle>
         <CardDescription>
-          {error ? "There was an issue generating the certificate." : `Certificate details for ${certificate?.domain}. Auto-renewal is active.`}
+          {error ? "There was an issue generating the certificate." : certificate ? `Certificate details for ${certificate.domain}. ${certificate.challengeType === 'dns-01' ? 'Auto-renewal active.' : 'Manual renewal recommended for HTTP-01.'}` : ''}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -49,6 +54,11 @@ export function CertStatus({ certificate, error, onRenew }: CertStatusProps) {
           </div>
         ) : certificate ? (
           <>
+            <div className="flex items-center gap-2">
+              {certificate.challengeType === 'dns-01' ? <Server size={16} className="text-muted-foreground" /> : <FileCode size={16} className="text-muted-foreground" />}
+              <span>Challenge Type:</span>
+              <span className="font-medium uppercase">{certificate.challengeType}</span>
+            </div>
             <div className="flex items-center gap-2">
               <FileText size={16} className="text-muted-foreground" />
               <span>Certificate Path:</span>
@@ -62,14 +72,19 @@ export function CertStatus({ certificate, error, onRenew }: CertStatusProps) {
              <div className="flex items-center gap-2">
               <CalendarDays size={16} className="text-muted-foreground" />
               <span>Estimated Expiry:</span>
-              <span className="font-medium">{getExpiryDate()}</span>
+              <span className="font-medium">{getExpiryDate(certificate)}</span>
             </div>
             {onRenew && (
               <div className="pt-2">
-                <Button variant="outline" size="sm" onClick={() => onRenew(certificate.domain)}>
-                    <RefreshCw className="mr-2 h-4 w-4" /> Renew Now (Manual Trigger)
+                <Button variant="outline" size="sm" onClick={() => onRenew(certificate)} disabled={isLoading}>
+                    {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                    {isLoading ? 'Renewing...' : 'Renew Now (Manual Trigger)'}
                 </Button>
-                <p className="text-xs text-muted-foreground mt-1">Auto-renewal is scheduled. Use this button for immediate renewal if needed.</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {certificate.challengeType === 'dns-01'
+                    ? 'Auto-renewal is scheduled. Use this button for immediate renewal if needed.'
+                    : 'HTTP-01 renewal requires server configuration. Use this button to attempt renewal.'}
+                </p>
               </div>
             )}
           </>
@@ -78,3 +93,5 @@ export function CertStatus({ certificate, error, onRenew }: CertStatusProps) {
     </Card>
   );
 }
+
+    
