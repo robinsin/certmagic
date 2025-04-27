@@ -6,7 +6,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import acme from 'acme-client';
-import { getAcmeClient, challengeCreateDns01, challengeRemoveDns01, challengeCreateHttp01, challengeRemoveHttp01, challengeValidate } from '@/lib/acme-client';
+import { getAcmeClient, challengeCreateDns01, challengeRemoveDns01, challengeCreateHttp01, challengeRemoveHttp01 } from '@/lib/acme-client';
 import { storeCertificate } from '@/lib/acme-storage'; // To store the final cert/key
 import type { DnsConfig, Certificate } from '@/services/cert-magic'; // Use types from service
 
@@ -15,6 +15,9 @@ interface GenerateRequestBody {
     challengeType: 'dns-01' | 'http-01';
     dnsConfig?: DnsConfig; // Required only for dns-01
 }
+
+// Function to add a delay
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export async function POST(request: NextRequest) {
     try {
@@ -62,7 +65,6 @@ export async function POST(request: NextRequest) {
         const authorization = authorizations[0]; // Assuming single domain order
         console.log(`Got authorization for ${authorization.identifier.value}`);
 
-
         /* Select challenge */
         const challenge = authorization.challenges.find(
             (chall) => chall.type === challengeType
@@ -73,32 +75,51 @@ export async function POST(request: NextRequest) {
         }
         console.log(`Selected challenge: ${challenge.type}, Status: ${challenge.status}, URL: ${challenge.url}`);
 
+        /* Prepare challenge */
+        let challengeRemovalFn: () => Promise<void> | undefined;
+        const keyAuthorization = await client.getChallengeKeyAuthorization(challenge);
 
-        /* Challenge handlers based on type */
-        let challengeCreateFn: acme.ChallengeCreateFn;
-        let challengeRemoveFn: acme.ChallengeRemoveFn;
+        if (challenge.status !== 'pending') {
+             console.log(`Challenge status is already ${challenge.status}, skipping creation.`);
+        } else {
+            if (challengeType === 'dns-01') {
+                if (!dnsConfig) throw new Error("Internal error: dnsConfig missing for DNS-01."); // Should be caught earlier
+                console.log('Using DNS-01 challenge handlers.');
+                const boundDnsConfig = dnsConfig; // Closure capture
+                await challengeCreateDns01({ identifier: authorization.identifier, challenge, keyAuthorization, dnsConfig: boundDnsConfig });
+                challengeRemovalFn = () => challengeRemoveDns01({ identifier: authorization.identifier, challenge, keyAuthorization, dnsConfig: boundDnsConfig });
+                console.log('DNS-01 challenge created. Waiting for propagation...');
+                await delay(30000); // Wait 30 seconds for DNS propagation (adjust if needed)
+                console.log('DNS propagation wait finished.');
+            } else { // http-01
+                console.log('Using HTTP-01 challenge handlers.');
+                await challengeCreateHttp01({ identifier: authorization.identifier, challenge, keyAuthorization });
+                challengeRemovalFn = () => challengeRemoveHttp01({ identifier: authorization.identifier, challenge, keyAuthorization });
+                console.log('HTTP-01 challenge created. Waiting for server...');
+                await delay(5000); // Wait 5 seconds for server/storage to be ready
+                console.log('HTTP server wait finished.');
+            }
 
-        if (challengeType === 'dns-01') {
-            if (!dnsConfig) throw new Error("Internal error: dnsConfig missing for DNS-01."); // Should be caught earlier
-             const boundDnsConfig = dnsConfig; // Closure capture
-             challengeCreateFn = (opts) => challengeCreateDns01({ ...opts, dnsConfig: boundDnsConfig });
-             challengeRemoveFn = (opts) => challengeRemoveDns01({ ...opts, dnsConfig: boundDnsConfig });
-            console.log('Using DNS-01 challenge handlers.');
-        } else { // http-01
-            challengeCreateFn = challengeCreateHttp01;
-            challengeRemoveFn = challengeRemoveHttp01;
-            console.log('Using HTTP-01 challenge handlers.');
+            /* Notify ACME server and wait for validation */
+            console.log('Notifying ACME server to validate challenge...');
+            await client.completeChallenge(challenge);
+            console.log('Waiting for ACME server validation...');
+            await client.waitForValidStatus(challenge);
+            console.log('Challenge validation successful.');
         }
 
 
-        /* Satisfy challenge */
-        console.log('Attempting to satisfy challenge...');
-        await client.challenge({
-            challenge: challenge,
-            challengeCreateFn: challengeCreateFn,
-            challengeValidateFn: challengeValidate, // Use default validator (waits slightly)
-            challengeRemoveFn: challengeRemoveFn, // Cleanup after validation
-        });
+        /* Cleanup challenge */
+        if (challengeRemovalFn) {
+            try {
+                console.log('Cleaning up challenge...');
+                await challengeRemovalFn();
+                console.log('Challenge cleanup successful.');
+            } catch (cleanupError) {
+                console.warn('Challenge cleanup failed:', cleanupError);
+                // Log but don't fail the whole process
+            }
+        }
 
 
         /* Finalize order */
@@ -145,7 +166,7 @@ export async function POST(request: NextRequest) {
          // Check for common ACME errors
         if (error.response && error.response.data && error.response.data.detail) {
             errorMessage = `ACME Server Error: ${error.response.data.detail}`;
-        } else if (error.message && error.message.includes('Verify error')) {
+        } else if (error.message && (error.message.includes('Verify error') || error.message.includes('challenge status was not valid'))) {
             errorMessage = `ACME challenge verification failed. Check DNS records or HTTP server setup. Details: ${error.message}`;
         }
 

@@ -48,13 +48,17 @@ export async function getAcmeClient(): Promise<acme.Client> {
     } catch (e: any) {
          // If account already exists, ACME server might return a specific error or status.
          // acme-client might handle this gracefully, but good to be aware.
-         // Let's assume if it's not a creation error, it might be okay.
-        if (e.message && !e.message.includes('account already exists')) { // Simple check, might need refinement
+         // Check if the error indicates the account already exists
+         const accountExistsError = (e?.code === 'ERR_ACME_ACCOUNT_EXISTS' || // Specific error code from acme-client v5+
+                                    (e?.message && e.message.includes('account already exists')) || // Generic message check
+                                    (e?.response?.status === 409) // Conflict status often indicates existing resource
+                                    );
+         if (!accountExistsError) {
             console.error('Failed to create/retrieve ACME account:', e);
-            acmeClientInstance = null; // Reset instance on failure
+            acmeClientInstance = null; // Reset instance on critical failure
             throw new Error(`Failed to initialize ACME account: ${e.message}`);
         }
-         console.log('ACME account already exists.');
+        console.log('ACME account already exists or initialization successful.');
     }
 
 
@@ -68,8 +72,8 @@ export async function getAcmeClient(): Promise<acme.Client> {
  * This needs to be implemented based on the specific DNS provider API.
  *
  * @param {object} opts - Options object.
- * @param {string} opts.identifier - The identifier (domain name).
- * @param {string} opts.challenge - The ACME challenge object.
+ * @param {acme.Identifier} opts.identifier - The identifier (domain name).
+ * @param {acme.Challenge} opts.challenge - The ACME challenge object.
  * @param {string} opts.keyAuthorization - The key authorization string.
  * @param {DnsConfig} opts.dnsConfig - DNS provider configuration.
  * @returns {Promise<void>}
@@ -110,12 +114,8 @@ export async function challengeCreateDns01(opts: {
             throw new Error(`Unsupported DNS provider: ${opts.dnsConfig.provider}`);
     }
 
-    // It's crucial to wait for DNS propagation after creating the record.
-    // This often involves polling DNS servers. For simplicity, we'll just log.
-    console.log(`DNS-01 Create: Record creation initiated for ${recordName}. Manual verification/wait might be needed.`);
-    // In a real implementation, add a delay or DNS polling logic here.
-    await new Promise(resolve => setTimeout(resolve, 30000)); // Basic 30-second wait (adjust as needed)
-     console.log(`DNS-01 Create: Wait complete. Assuming propagation.`);
+    // DNS propagation wait is now handled in the API route after this function returns.
+    console.log(`DNS-01 Create: Record creation initiated/logged for ${recordName}.`);
 }
 
 /**
@@ -123,8 +123,8 @@ export async function challengeCreateDns01(opts: {
  * This needs to be implemented based on the specific DNS provider API.
  *
  * @param {object} opts - Options object.
- * @param {string} opts.identifier - The identifier (domain name).
- * @param {string} opts.challenge - The ACME challenge object.
+ * @param {acme.Identifier} opts.identifier - The identifier (domain name).
+ * @param {acme.Challenge} opts.challenge - The ACME challenge object.
  * @param {string} opts.keyAuthorization - The key authorization string (used to find the record).
  * @param {DnsConfig} opts.dnsConfig - DNS provider configuration.
  * @returns {Promise<void>}
@@ -171,7 +171,7 @@ export async function challengeRemoveDns01(opts: {
  * (e.g., `/api/acme-challenge/[token]`).
  *
  * @param {object} opts - Options object.
- * @param {string} opts.identifier - The identifier (domain name).
+ * @param {acme.Identifier} opts.identifier - The identifier (domain name).
  * @param {acme.Challenge} opts.challenge - The ACME challenge object.
  * @param {string} opts.keyAuthorization - The key authorization string.
  * @returns {Promise<void>}
@@ -192,7 +192,7 @@ export async function challengeCreateHttp01(opts: {
     // This will be retrieved by the dedicated challenge serving endpoint.
     await storeHttpChallenge(token, keyAuth);
 
-    console.log(`HTTP-01 Create: Challenge content stored. Ensure endpoint is ready to serve it.`);
+    console.log(`HTTP-01 Create: Challenge content stored. Endpoint should be ready.`);
 }
 
 
@@ -200,7 +200,7 @@ export async function challengeCreateHttp01(opts: {
  * Handles HTTP-01 challenge removal by deleting the stored challenge file content.
  *
  * @param {object} opts - Options object.
- * @param {string} opts.identifier - The identifier (domain name).
+ * @param {acme.Identifier} opts.identifier - The identifier (domain name).
  * @param {acme.Challenge} opts.challenge - The ACME challenge object.
  * @param {string} opts.keyAuthorization - The key authorization string.
  * @returns {Promise<void>}
@@ -218,19 +218,4 @@ export async function challengeRemoveHttp01(opts: {
     await removeHttpChallenge(token);
 
     console.log(`HTTP-01 Remove: Stored challenge removed.`);
-}
-
-/**
- * Default challenge validation function (can be overridden in specific calls).
- * Waits for a short period after challenge creation before telling the ACME
- * server to verify. Increase delay if needed.
- *
- * @param {acme.Challenge} challenge The challenge object.
- * @returns {Promise<boolean>} Always returns true in this basic implementation.
- */
-export async function challengeValidate(challenge: acme.Challenge): Promise<boolean> {
-    console.log(`Validating challenge type: ${challenge.type}, status: ${challenge.status}`);
-    // Optional: Add a small delay, especially after DNS changes
-    // await new Promise(resolve => setTimeout(resolve, 5000)); // 5 sec delay
-    return true; // Tell the client to proceed with ACME server validation
 }

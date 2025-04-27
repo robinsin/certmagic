@@ -10,7 +10,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import acme from 'acme-client';
-import { getAcmeClient, challengeCreateDns01, challengeRemoveDns01, challengeCreateHttp01, challengeRemoveHttp01, challengeValidate } from '@/lib/acme-client';
+import { getAcmeClient, challengeCreateDns01, challengeRemoveDns01, challengeCreateHttp01, challengeRemoveHttp01 } from '@/lib/acme-client';
 import { storeCertificate, retrieveCertificate } from '@/lib/acme-storage'; // Need to potentially retrieve old config/key
 import type { DnsConfig, Certificate } from '@/services/cert-magic';
 
@@ -26,6 +26,9 @@ interface RenewRequestBody {
     // dnsConfig?: DnsConfig; // Only if original was DNS-01 and creds weren't stored
 }
 
+// Function to add a delay
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 export async function POST(request: NextRequest) {
     try {
         const body: RenewRequestBody = await request.json();
@@ -40,24 +43,11 @@ export async function POST(request: NextRequest) {
         // --- PLACEHOLDER: Retrieve Stored Configuration ---
         // In a real app, you would fetch the config associated with this domain.
         // This includes the original challenge type and potentially encrypted DNS creds.
-        console.warn(`Renewal for ${domain}: Backend needs to retrieve stored config (challenge type, DNS keys if DNS-01). Simulating DNS-01 for now if not 'http-fail'.`);
+        console.warn(`Renewal for ${domain}: Backend needs to retrieve stored config (challenge type, DNS keys if DNS-01). Simulating based on domain name for now.`);
         // For simulation, let's *assume* we know the type and have creds if DNS-01
         // This is a MAJOR simplification.
-        let challengeType: 'dns-01' | 'http-01' = 'dns-01'; // Default assumption
+        let challengeType: 'dns-01' | 'http-01';
         let dnsConfig: DnsConfig | undefined = undefined; // Assume creds are available backend-side
-
-        // Example: Fetch from a hypothetical DB/store
-        // const storedConfig = await getStoredDomainConfig(domain);
-        // if (!storedConfig) {
-        //     return NextResponse.json({ error: `No configuration found for domain ${domain} to renew.` }, { status: 404 });
-        // }
-        // challengeType = storedConfig.challengeType;
-        // if (challengeType === 'dns-01') {
-        //     dnsConfig = await decryptAndRetrieveDnsCredentials(storedConfig.dnsProvider, storedConfig.credentialsRef);
-        //     if (!dnsConfig) {
-        //         return NextResponse.json({ error: `Could not retrieve DNS credentials for ${domain}.` }, { status: 500 });
-        //     }
-        // }
 
          // --- Simulate based on domain name for testing ---
          if (domain.includes("http-domain")) {
@@ -67,10 +57,13 @@ export async function POST(request: NextRequest) {
          } else {
              // Assume DNS-01 and *simulate* having credentials
              challengeType = 'dns-01';
-             dnsConfig = { provider: 'cloudflare', apiKey: 'SIMULATED_DUMMY_API_KEY_FOR_RENEWAL' }; // !! REPLACE with actual retrieved/decrypted key
+             // !! REPLACE with actual retrieved/decrypted key mechanism
+             // Example: Retrieve securely stored key based on domain/provider
+             const simulatedApiKey = process.env.SIMULATED_CLOUDFLARE_API_KEY || 'SIMULATED_DUMMY_API_KEY_FOR_RENEWAL';
+             dnsConfig = { provider: 'cloudflare', apiKey: simulatedApiKey };
              console.log(`Simulating renewal with DNS-01 for ${domain} using ${dnsConfig.provider}`);
              if (!process.env.NODE_ENV || process.env.NODE_ENV === 'development') {
-                 console.warn("Using SIMULATED API key for renewal. Replace with real key retrieval.");
+                 console.warn("Using SIMULATED or ENV API key for renewal. Replace with real key retrieval.");
              }
          }
          // --- End Simulation ---
@@ -103,28 +96,50 @@ export async function POST(request: NextRequest) {
         const challenge = authorization.challenges.find((chall) => chall.type === challengeType);
         if (!challenge) throw new Error(`Could not find challenge type ${challengeType}`);
 
-        /* Challenge handlers */
-        let challengeCreateFn: acme.ChallengeCreateFn;
-        let challengeRemoveFn: acme.ChallengeRemoveFn;
+        /* Prepare and complete challenge */
+        let challengeRemovalFn: () => Promise<void> | undefined;
+        const keyAuthorization = await client.getChallengeKeyAuthorization(challenge);
 
-        if (challengeType === 'dns-01') {
-             if (!dnsConfig) throw new Error("Internal error: dnsConfig missing for DNS-01 renewal."); // Should be caught earlier
-             const boundDnsConfig = dnsConfig; // Closure capture
-             challengeCreateFn = (opts) => challengeCreateDns01({ ...opts, dnsConfig: boundDnsConfig });
-             challengeRemoveFn = (opts) => challengeRemoveDns01({ ...opts, dnsConfig: boundDnsConfig });
+        if (challenge.status !== 'pending') {
+             console.log(`Challenge status is already ${challenge.status}, skipping creation.`);
         } else {
-            challengeCreateFn = challengeCreateHttp01;
-            challengeRemoveFn = challengeRemoveHttp01;
+            if (challengeType === 'dns-01') {
+                if (!dnsConfig) throw new Error("Internal error: dnsConfig missing for DNS-01 renewal."); // Should be caught earlier
+                console.log('Using DNS-01 challenge handlers for renewal.');
+                const boundDnsConfig = dnsConfig; // Closure capture
+                await challengeCreateDns01({ identifier: authorization.identifier, challenge, keyAuthorization, dnsConfig: boundDnsConfig });
+                challengeRemovalFn = () => challengeRemoveDns01({ identifier: authorization.identifier, challenge, keyAuthorization, dnsConfig: boundDnsConfig });
+                console.log('DNS-01 challenge created for renewal. Waiting for propagation...');
+                await delay(30000); // Wait 30 seconds (adjust if needed)
+                console.log('DNS propagation wait finished.');
+            } else { // http-01
+                console.log('Using HTTP-01 challenge handlers for renewal.');
+                await challengeCreateHttp01({ identifier: authorization.identifier, challenge, keyAuthorization });
+                challengeRemovalFn = () => challengeRemoveHttp01({ identifier: authorization.identifier, challenge, keyAuthorization });
+                console.log('HTTP-01 challenge created for renewal. Waiting for server...');
+                await delay(5000); // Wait 5 seconds
+                console.log('HTTP server wait finished.');
+            }
+
+            /* Notify ACME server and wait for validation */
+            console.log('Notifying ACME server to validate challenge for renewal...');
+            await client.completeChallenge(challenge);
+            console.log('Waiting for ACME server validation for renewal...');
+            await client.waitForValidStatus(challenge);
+            console.log('Renewal challenge validation successful.');
         }
 
-        /* Satisfy challenge */
-        console.log('Attempting to satisfy challenge for renewal...');
-        await client.challenge({
-            challenge: challenge,
-            challengeCreateFn: challengeCreateFn,
-            challengeValidateFn: challengeValidate,
-            challengeRemoveFn: challengeRemoveFn,
-        });
+        /* Cleanup challenge */
+        if (challengeRemovalFn) {
+            try {
+                console.log('Cleaning up renewal challenge...');
+                await challengeRemovalFn();
+                console.log('Renewal challenge cleanup successful.');
+            } catch (cleanupError) {
+                console.warn('Renewal challenge cleanup failed:', cleanupError);
+            }
+        }
+
 
         /* Finalize order */
         console.log('Challenge completed, finalizing renewal order...');
@@ -164,7 +179,7 @@ export async function POST(request: NextRequest) {
         }
          if (error.response && error.response.data && error.response.data.detail) {
             errorMessage = `ACME Server Error during renewal: ${error.response.data.detail}`;
-        } else if (error.message && error.message.includes('Verify error')) {
+        } else if (error.message && (error.message.includes('Verify error') || error.message.includes('challenge status was not valid'))) {
             errorMessage = `ACME challenge verification failed during renewal. Details: ${error.message}`;
         }
 
