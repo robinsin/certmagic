@@ -149,16 +149,18 @@ export function CertStatus({ certResult, error, onRenew, onVerifyHttp, isLoading
                 <Label htmlFor="certPem" className="flex items-center gap-1 text-sm font-semibold"><FileText size={16} /> Certificate (PEM)</Label>
                 <CopyButton textToCopy={certResult.certificatePem} label="Copy Certificate PEM" />
                 <Textarea id="certPem" readOnly value={certResult.certificatePem} className="h-40 font-mono text-xs bg-muted border rounded-md p-2 pr-8" rows={8} />
-                <FormDescription className="text-xs">Your certificate chain.</FormDescription>
+                 {/* Use standard p tag for description outside FormField context */}
+                <p className="text-xs text-muted-foreground">Your certificate chain.</p>
             </div>
 
              <div className="space-y-1 relative">
                  <Label htmlFor="privKeyPem" className="flex items-center gap-1 text-sm font-semibold"><Key size={16} /> Private Key (PEM)</Label>
                 <CopyButton textToCopy={certResult.privateKeyPem} label="Copy Private Key PEM" />
                  <Textarea id="privKeyPem" readOnly value={certResult.privateKeyPem} className="h-40 font-mono text-xs bg-muted border rounded-md p-2 pr-8" rows={8} />
-                 <FormDescription className="text-xs text-destructive font-medium">
+                  {/* Use standard p tag for description outside FormField context */}
+                 <p className="text-xs text-destructive font-medium">
                      WARNING: Handle this key securely. Do not share it. Store securely on your server.
-                 </FormDescription>
+                 </p>
              </div>
           </>
         )}
@@ -178,13 +180,15 @@ export function CertStatus({ certResult, error, onRenew, onVerifyHttp, isLoading
                     <Label htmlFor="httpPath" className="flex items-center gap-1 text-sm font-semibold">File Path:</Label>
                      <CopyButton textToCopy={`/.well-known/acme-challenge/${certResult.token}`} label="Copy File Path" />
                     <Input id="httpPath" readOnly value={`http://${certResult.domain}/.well-known/acme-challenge/${certResult.token}`} className="font-mono text-xs bg-muted pr-8" />
-                     <FormDescription className="text-xs">Create directories if they don't exist. Must be served over HTTP (port 80).</FormDescription>
+                     {/* Use standard p tag for description outside FormField context */}
+                    <p className="text-xs text-muted-foreground">Create directories if they don't exist. Must be served over HTTP (port 80).</p>
                 </div>
                 <div className="space-y-1 relative">
                      <Label htmlFor="httpContent" className="flex items-center gap-1 text-sm font-semibold">File Content:</Label>
                      <CopyButton textToCopy={certResult.keyAuthorization} label="Copy File Content" />
                      <Textarea id="httpContent" readOnly value={certResult.keyAuthorization} className="h-20 font-mono text-xs bg-muted p-2 pr-8" rows={3} />
-                    <FormDescription className="text-xs">Place this exact text content into the file named above.</FormDescription>
+                    {/* Use standard p tag for description outside FormField context */}
+                    <p className="text-xs text-muted-foreground">Place this exact text content into the file named above.</p>
                  </div>
 
                  <p className="text-sm text-foreground pt-2">
@@ -240,9 +244,7 @@ export function CertStatus({ certResult, error, onRenew, onVerifyHttp, isLoading
 }
 
 
-// Helper component for FormDescription (needed by CertStatus if not imported globally)
-const FormDescription: React.FC<React.HTMLAttributes<HTMLParagraphElement>> = ({ className, ...props }) => (
-  <p className={cn("text-sm text-muted-foreground", className)} {...props} />
-);
-FormDescription.displayName = "FormDescription"
+
+    
+
     
