@@ -28,7 +28,7 @@ import {
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { generateCertificate, type DnsConfig, type Certificate } from "@/services/cert-magic";
+import { generateCertificate, type DnsConfig, type CertificateResult, type HttpChallengePending, type Certificate } from "@/services/cert-magic";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const ChallengeType = z.enum(["dns-01", "http-01"]);
@@ -70,7 +70,7 @@ const formSchema = z.object({
 type CertFormValues = z.infer<typeof formSchema>;
 
 interface CertFormProps {
-  onCertificateGenerated: (certificate: Certificate | null, error?: string) => void;
+  onCertificateGenerated: (result: CertificateResult | null, error?: string) => void; // Updated type
   isLoading: boolean;
   setIsLoading: (loading: boolean) => void;
 }
@@ -129,16 +129,31 @@ export function CertForm({ onCertificateGenerated, isLoading, setIsLoading }: Ce
 
     try {
       // Call the service function which now calls the backend API
-      const certificate = await generateCertificate(values.domain, values.challengeType, dnsConfig);
+      const result = await generateCertificate(values.domain, values.challengeType, dnsConfig);
+
+      let toastTitle = "";
+      let toastDescription = "";
+      let toastVariant: "default" | "destructive" = "default";
+
+      if (result.status === 'issued') {
+          toastTitle = "Success!";
+          toastDescription = result.message || `Certificate generated successfully for ${values.domain}.`;
+          toastVariant = "default";
+          form.reset(); // Reset form only on final success
+      } else if (result.status === 'http-01-pending') {
+          toastTitle = "Action Required";
+          toastDescription = result.message || `HTTP-01 challenge initiated. Please follow instructions displayed below.`;
+          toastVariant = "default"; // Use default for pending, maybe add a specific style later
+      }
 
       toast({
-        title: "Success!",
-        description: certificate.message || `Certificate generated successfully for ${values.domain}.`,
-        variant: "default",
-        duration: 10000, // Give more time to read potential instructions
+        title: toastTitle,
+        description: toastDescription,
+        variant: toastVariant,
+        duration: 15000, // Give more time to read potential instructions
       });
-      onCertificateGenerated(certificate);
-      form.reset(); // Reset form on success
+      onCertificateGenerated(result);
+
     } catch (error) {
       console.error("Certificate generation failed:", error);
       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
@@ -149,7 +164,10 @@ export function CertForm({ onCertificateGenerated, isLoading, setIsLoading }: Ce
       });
       onCertificateGenerated(null, errorMessage);
     } finally {
-      setIsLoading(false);
+      // Only set loading false if it's not a pending state,
+      // as user action (Verify) will follow.
+      // Let the CertManager handle loading state across steps.
+      // setIsLoading(false); -- Handled by CertManager now
     }
   }
 
