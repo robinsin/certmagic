@@ -5,7 +5,7 @@ import * as React from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { Globe, KeyRound, Loader2, Server, Sparkles, FileCode } from "lucide-react";
+import { Globe, KeyRound, Loader2, Server, Sparkles, FileCode, AlertTriangle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -29,6 +29,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { generateCertificate, type DnsConfig, type Certificate } from "@/services/cert-magic";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const ChallengeType = z.enum(["dns-01", "http-01"]);
 
@@ -36,7 +37,11 @@ const formSchema = z.object({
   domain: z.string().min(3, {
     message: "Domain must be at least 3 characters.",
   }).refine((value) => /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(value), {
-    message: "Invalid domain format.",
+    message: "Invalid domain format. Use example.com or sub.example.com.",
+  }).refine(value => !value.startsWith('.') && !value.endsWith('.'), {
+      message: "Domain cannot start or end with a dot.",
+  }).refine(value => !value.includes('..'), {
+      message: "Domain cannot contain consecutive dots.",
   }),
   challengeType: ChallengeType.default("dns-01"),
   dnsProvider: z.string().optional(),
@@ -50,10 +55,11 @@ const formSchema = z.object({
         path: ["dnsProvider"],
       });
     }
-    if (!data.apiKey || data.apiKey.length < 10) { // Basic length check
+    // Basic check - real validation happens server-side
+    if (!data.apiKey || data.apiKey.trim().length === 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "A valid API Key is required for DNS-01 challenge.",
+        message: "API Key is required for DNS-01 challenge.",
         path: ["apiKey"],
       });
     }
@@ -69,12 +75,13 @@ interface CertFormProps {
   setIsLoading: (loading: boolean) => void;
 }
 
-// TODO: Add more providers as needed
+// Supported DNS providers (ensure backend supports these identifiers)
 const dnsProviders = [
   { value: "cloudflare", label: "Cloudflare" },
   { value: "route53", label: "AWS Route 53" },
   { value: "godaddy", label: "GoDaddy" },
-  { value: "other", label: "Other (Manual/Unsupported)" },
+  // Add more as backend support is added
+  // { value: "other", label: "Other (Manual/Unsupported)" },
 ];
 
 export function CertForm({ onCertificateGenerated, isLoading, setIsLoading }: CertFormProps) {
@@ -88,6 +95,7 @@ export function CertForm({ onCertificateGenerated, isLoading, setIsLoading }: Ce
       dnsProvider: "",
       apiKey: "",
     },
+    mode: "onChange", // Validate on change for better UX
   });
 
   const watchedChallengeType = form.watch("challengeType");
@@ -98,11 +106,11 @@ export function CertForm({ onCertificateGenerated, isLoading, setIsLoading }: Ce
 
     let dnsConfig: DnsConfig | undefined = undefined;
     if (values.challengeType === "dns-01") {
+        // Validation should catch this, but double-check
         if (!values.dnsProvider || !values.apiKey) {
-            // This should ideally be caught by validation, but safeguard here
              toast({
                 title: "Missing Information",
-                description: "DNS Provider and API Key are required for DNS-01 challenge.",
+                description: "DNS Provider and API Key are required for DNS-01.",
                 variant: "destructive",
             });
             setIsLoading(false);
@@ -114,23 +122,26 @@ export function CertForm({ onCertificateGenerated, isLoading, setIsLoading }: Ce
       };
     }
 
-    try {
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1500));
+    toast({
+        title: "Requesting Certificate...",
+        description: `Sending request for ${values.domain} using ${values.challengeType.toUpperCase()}.`,
+    });
 
-      // Call the service function
+    try {
+      // Call the service function which now calls the backend API
       const certificate = await generateCertificate(values.domain, values.challengeType, dnsConfig);
 
       toast({
         title: "Success!",
-        description: `Certificate generated for ${values.domain} using ${values.challengeType.toUpperCase()} challenge.`,
+        description: certificate.message || `Certificate generated successfully for ${values.domain}.`,
         variant: "default",
+        duration: 10000, // Give more time to read potential instructions
       });
       onCertificateGenerated(certificate);
       form.reset(); // Reset form on success
     } catch (error) {
       console.error("Certificate generation failed:", error);
-      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred during certificate generation.";
+      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
       toast({
         title: "Error Generating Certificate",
         description: errorMessage,
@@ -143,86 +154,88 @@ export function CertForm({ onCertificateGenerated, isLoading, setIsLoading }: Ce
   }
 
   return (
-    <Card className="w-full max-w-2xl shadow-lg">
+    <Card className="w-full max-w-2xl shadow-lg border border-border rounded-lg">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-2xl">
-          <Sparkles className="text-primary" /> Generate New Certificate
+        <CardTitle className="flex items-center gap-2 text-2xl text-primary">
+          <Sparkles className="h-6 w-6" /> Generate Certificate
         </CardTitle>
         <CardDescription>
-          Enter your domain and select the challenge type to generate a Let's Encrypt certificate.
+          Provide your domain and choose a verification method. CertMagic will interact with Let's Encrypt via our backend.
         </CardDescription>
       </CardHeader>
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-5 pt-5">
             <FormField
               control={form.control}
               name="domain"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="flex items-center gap-1"><Globe size={16} /> Domain Name</FormLabel>
+                  <FormLabel className="flex items-center gap-1 font-semibold"><Globe size={16} /> Domain Name</FormLabel>
                   <FormControl>
-                    <Input placeholder="example.com" {...field} />
+                    <Input placeholder="yourdomain.com" {...field} />
                   </FormControl>
                   <FormDescription>
-                    The domain you want to secure.
+                    The fully qualified domain name (FQDN) you want to secure.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
             />
 
-            <FormField
+             <FormField
               control={form.control}
               name="challengeType"
               render={({ field }) => (
                 <FormItem className="space-y-3">
-                  <FormLabel>Challenge Type</FormLabel>
-                  <FormControl>
-                    <RadioGroup
-                      onValueChange={field.onChange}
-                      defaultValue={field.value}
-                      className="flex flex-col space-y-1"
+                   <FormLabel className="font-semibold">Verification Method</FormLabel>
+                   <FormControl>
+                     <RadioGroup
+                       onValueChange={field.onChange}
+                       defaultValue={field.value}
+                       className="flex flex-col space-y-2 md:flex-row md:space-y-0 md:space-x-4"
                     >
-                      <FormItem className="flex items-center space-x-3 space-y-0">
-                        <FormControl>
-                          <RadioGroupItem value="dns-01" />
-                        </FormControl>
-                        <FormLabel className="font-normal flex items-center gap-1">
-                         <Server size={16} /> DNS-01 (Requires API Key)
-                        </FormLabel>
-                      </FormItem>
-                      <FormItem className="flex items-center space-x-3 space-y-0">
-                        <FormControl>
-                          <RadioGroupItem value="http-01" />
-                        </FormControl>
-                        <FormLabel className="font-normal flex items-center gap-1">
-                         <FileCode size={16} /> HTTP-01 (Requires Server Config)
-                        </FormLabel>
-                      </FormItem>
-                    </RadioGroup>
-                  </FormControl>
-                   <FormDescription>
-                    Choose the method to verify domain ownership. DNS-01 allows full automation. HTTP-01 requires your web server to serve verification files.
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+                       <FormItem className="flex items-center space-x-3 space-y-0 p-3 border rounded-md flex-1 hover:border-primary transition-colors">
+                         <FormControl>
+                           <RadioGroupItem value="dns-01" id="dns-01" />
+                         </FormControl>
+                         <FormLabel htmlFor="dns-01" className="font-normal flex items-center gap-1 cursor-pointer">
+                          <Server size={16} /> DNS-01 (Recommended)
+                         </FormLabel>
+                       </FormItem>
+                       <FormItem className="flex items-center space-x-3 space-y-0 p-3 border rounded-md flex-1 hover:border-primary transition-colors">
+                         <FormControl>
+                           <RadioGroupItem value="http-01" id="http-01" />
+                         </FormControl>
+                         <FormLabel htmlFor="http-01" className="font-normal flex items-center gap-1 cursor-pointer">
+                          <FileCode size={16} /> HTTP-01
+                         </FormLabel>
+                       </FormItem>
+                     </RadioGroup>
+                   </FormControl>
+                    <FormDescription>
+                      {watchedChallengeType === 'dns-01'
+                        ? 'Requires API access to your DNS provider for automated verification and renewal.'
+                        : 'Requires your web server to serve a specific file. May require manual steps for setup and renewal.'}
+                    </FormDescription>
+                   <FormMessage />
+                 </FormItem>
+               )}
+             />
 
 
             {watchedChallengeType === "dns-01" && (
-              <>
+              <div className="space-y-5 p-4 border border-dashed border-primary/50 rounded-md bg-card">
                  <FormField
                   control={form.control}
                   name="dnsProvider"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="flex items-center gap-1"><Server size={16} /> DNS Provider</FormLabel>
+                      <FormLabel className="flex items-center gap-1 font-semibold"><Server size={16} /> DNS Provider</FormLabel>
                       <Select onValueChange={field.onChange} defaultValue={field.value}>
                         <FormControl>
                           <SelectTrigger>
-                            <SelectValue placeholder="Select your DNS provider" />
+                            <SelectValue placeholder="Select DNS Provider" />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
@@ -234,7 +247,7 @@ export function CertForm({ onCertificateGenerated, isLoading, setIsLoading }: Ce
                         </SelectContent>
                       </Select>
                       <FormDescription>
-                        Choose the provider where your domain's DNS is managed (Required for DNS-01).
+                        Select the service managing your domain's DNS records.
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -245,30 +258,49 @@ export function CertForm({ onCertificateGenerated, isLoading, setIsLoading }: Ce
                   name="apiKey"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="flex items-center gap-1"><KeyRound size={16} /> DNS Provider API Key</FormLabel>
+                      <FormLabel className="flex items-center gap-1 font-semibold"><KeyRound size={16} /> DNS Provider API Key / Secret</FormLabel>
                       <FormControl>
-                        <Input type="password" placeholder="Enter API Key" {...field} />
+                        <Input type="password" placeholder="Enter API Key or Secret" {...field} />
                       </FormControl>
-                      <FormDescription>
-                        Required for DNS-01 challenge and auto-renewal. Ensure key has necessary permissions.
-                      </FormDescription>
-                      <FormMessage />
+                       <FormDescription>
+                         Needed to automatically create verification records. Handled securely by our backend.
+                       </FormDescription>
+                       <FormMessage />
                     </FormItem>
                   )}
                 />
-              </>
+                 <Alert variant="default" className="bg-secondary/50 border-primary/20">
+                    <AlertTriangle className="h-4 w-4 text-primary" />
+                    <AlertTitle className="text-primary">API Key Security</AlertTitle>
+                    <AlertDescription className="text-xs">
+                        Ensure the API key has the minimum required permissions (usually DNS record management for the specific zone). Your key is transmitted securely to our backend and used only for certificate operations. Consider creating specific, limited-scope keys if possible.
+                    </AlertDescription>
+                 </Alert>
+              </div>
             )}
+
+             {watchedChallengeType === "http-01" && (
+                 <Alert variant="default" className="bg-secondary/50 border-blue-500/30">
+                     <AlertTriangle className="h-4 w-4 text-accent" />
+                     <AlertTitle className="text-accent">HTTP-01 Requirements</AlertTitle>
+                     <AlertDescription className="text-xs">
+                         Your web server for `{form.getValues("domain") || 'yourdomain.com'}` must be publicly accessible on port 80 and configured to serve files from the `/.well-known/acme-challenge/` directory. The backend will provide the file content/name during verification. Auto-renewal may require manual intervention if server setup changes.
+                     </AlertDescription>
+                 </Alert>
+             )}
+
           </CardContent>
           <CardFooter>
-            <Button type="submit" disabled={isLoading} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground">
+             {/* Use accent color for primary action button */}
+            <Button type="submit" disabled={isLoading || !form.formState.isValid} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground font-semibold py-3 text-base">
               {isLoading ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Generating...
+                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                  Processing Request...
                 </>
               ) : (
                 <>
-                 <Sparkles className="mr-2 h-4 w-4" />
+                 <Sparkles className="mr-2 h-5 w-5" />
                  Generate Certificate
                 </>
               )}
@@ -279,5 +311,3 @@ export function CertForm({ onCertificateGenerated, isLoading, setIsLoading }: Ce
     </Card>
   );
 }
-
-    

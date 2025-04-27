@@ -1,21 +1,26 @@
+/**
+ * @fileoverview Service functions for interacting with the CertMagic backend API
+ * to generate and renew Let's Encrypt certificates.
+ */
 
 /**
  * Represents the DNS configuration required for DNS-01 challenge.
+ * This information will be sent to the backend.
  */
 export interface DnsConfig {
   /**
-   * The DNS provider (e.g., 'cloudflare', 'route53', 'godaddy').
+   * The DNS provider identifier (e.g., 'cloudflare', 'route53', 'godaddy').
    */
   provider: string;
   /**
    * The API key or credentials for the DNS provider.
-   * IMPORTANT: Handle this securely in a real application.
+   * IMPORTANT: This is sent to the backend, which must handle it securely.
    */
-  apiKey: string;
+  apiKey: string; // In a real app, consider more secure credential handling
 }
 
 /**
- * Represents the details of a generated/renewed certificate.
+ * Represents the details of a generated/renewed certificate as returned by the backend API.
  */
 export interface Certificate {
   /**
@@ -23,125 +28,185 @@ export interface Certificate {
    */
   domain: string;
   /**
-   * The path or content of the full certificate chain (PEM format).
-   * In a real app, this might be stored securely or returned directly.
+   * The actual certificate content (PEM format), typically the full chain.
+   * The backend provides this after successful generation/renewal.
    */
-  certificatePath: string; // Placeholder: Path on the server or a download link/content
+  certificatePem: string;
   /**
-   * The path or content of the private key (PEM format).
-   * IMPORTANT: Handle this securely. Never expose private keys directly to the client.
+   * The actual private key content (PEM format).
+   * IMPORTANT: The backend should ideally NOT return the private key directly.
+   * Instead, it should store it securely and provide instructions on how to access/use it.
+   * For this example, we'll include it, but this is NOT recommended for production.
    */
-  privateKeyPath: string; // Placeholder: Path on the server or a secure delivery method
+  privateKeyPem: string; // SECURITY WARNING: Not recommended to send private key to client.
   /**
    * The challenge type used to obtain this certificate.
    */
   challengeType: 'dns-01' | 'http-01';
   /**
    * Optional: The DNS configuration used, if challengeType was 'dns-01'.
-   * Stored (conceptually) for renewal purposes.
+   * The backend might store this association for renewal.
    */
-  dnsConfig?: DnsConfig;
+  dnsConfig?: DnsConfig; // May not be returned by API, but stored backend-side.
   /**
-   * Optional: Estimated expiry date (useful for UI).
+   * Expiry date provided by the backend.
    */
-  expiresAt?: Date;
+  expiresAt: Date;
+  /**
+   * Message from the backend, e.g., instructions for HTTP-01 setup or success message.
+   */
+  message?: string;
 }
 
 /**
- * Asynchronously generates a Let's Encrypt certificate for a given domain.
- * This function simulates the process, including potential API calls to a backend service
- * that handles the ACME challenge process (HTTP-01 or DNS-01).
- * Auto-renewal setup happens server-side after successful generation.
+ * Represents the data sent to the backend API for certificate generation.
+ */
+interface GenerateRequestData {
+    domain: string;
+    challengeType: 'dns-01' | 'http-01';
+    dnsConfig?: DnsConfig; // Only included for DNS-01
+}
+
+/**
+ * Represents the data sent to the backend API for certificate renewal.
+ */
+interface RenewRequestData {
+    domain: string; // Identify the certificate to renew
+}
+
+
+/**
+ * Calls the backend API to generate a Let's Encrypt certificate.
+ * The backend handles the actual ACME protocol interaction.
  *
  * @param domain The domain name for which to generate the certificate.
  * @param challengeType The ACME challenge type to use ('dns-01' or 'http-01').
- * @param dnsConfig The DNS configuration for DNS-01 challenge (required only if challengeType is 'dns-01').
- * @returns A promise that resolves to a Certificate object containing the certificate details.
- * @throws Will throw an error if certificate generation fails.
+ * @param dnsConfig The DNS configuration for DNS-01 challenge.
+ * @returns A promise that resolves to a Certificate object upon success.
+ * @throws Will throw an error if the API call fails or the backend reports an error.
  */
 export async function generateCertificate(domain: string, challengeType: 'dns-01' | 'http-01', dnsConfig?: DnsConfig): Promise<Certificate> {
-  console.log(`Generating certificate for ${domain} using ${challengeType.toUpperCase()} challenge.`);
+  console.log(`Requesting certificate generation for ${domain} via API using ${challengeType.toUpperCase()} challenge.`);
 
-  if (challengeType === 'dns-01' && !dnsConfig) {
-    throw new Error("DNS configuration is required for DNS-01 challenge.");
-  }
-
-  // --- Placeholder Implementation ---
-  // In a real application:
-  // 1. Send domain, challengeType, and potentially DNS config (securely) to your backend API.
-  // 2. Backend uses an ACME client.
-  // 3. If DNS-01: Use API key to update DNS records.
-  // 4. If HTTP-01: Place validation file on the server (requires server setup).
-  // 5. Backend completes challenge, obtains cert/key.
-  // 6. Backend securely stores cert/key and schedules auto-renewal (likely requires DNS-01 for full automation).
-  // 7. Backend returns success status and relevant info.
-
-  // Simulate potential failure
-  if (domain.includes("fail")) {
-      await new Promise(resolve => setTimeout(resolve, 500)); // Simulate processing time
-      throw new Error(`Failed to validate domain ${domain} using ${challengeType.toUpperCase()}. Check ${challengeType === 'dns-01' ? 'DNS settings' : 'server configuration'}.`);
-  }
-
-   // Simulate success after a delay
-   await new Promise(resolve => setTimeout(resolve, 1000));
-
-  const expiry = new Date();
-  expiry.setDate(expiry.getDate() + 90); // Let's Encrypt certs are valid for 90 days
-
-  console.log(`Certificate generation successful for ${domain} using ${challengeType.toUpperCase()}. Auto-renewal scheduled (if applicable).`);
-
-  return {
-    domain: domain,
-    // IMPORTANT: These paths are illustrative.
-    certificatePath: `/etc/letsencrypt/live/${domain}/fullchain.pem`,
-    privateKeyPath: `/etc/letsencrypt/live/${domain}/privkey.pem`,
-    challengeType: challengeType,
-    dnsConfig: challengeType === 'dns-01' ? dnsConfig : undefined, // Store config if DNS-01 was used
-    expiresAt: expiry,
+  const requestData: GenerateRequestData = {
+      domain,
+      challengeType,
   };
+
+  if (challengeType === 'dns-01') {
+      if (!dnsConfig || !dnsConfig.provider || !dnsConfig.apiKey) {
+          throw new Error("DNS Provider and API Key are required for DNS-01 challenge.");
+      }
+      requestData.dnsConfig = dnsConfig;
+  }
+
+  // --- Actual Backend API Call ---
+  // Replace '/api/generate-certificate' with your actual backend endpoint.
+  const response = await fetch('/api/generate-certificate', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestData),
+  });
+
+  if (!response.ok) {
+    let errorMessage = `API error: ${response.status} ${response.statusText}`;
+    try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorMessage; // Use specific error from backend if available
+    } catch (e) {
+        // Ignore JSON parsing error if response body is not JSON
+    }
+    console.error("Certificate generation API call failed:", errorMessage);
+    throw new Error(errorMessage);
+  }
+
+  const result = await response.json();
+
+  // Assuming the backend returns data conforming to the Certificate interface
+  // We need to parse the date string back into a Date object
+  const certificate: Certificate = {
+      ...result,
+      expiresAt: new Date(result.expiresAt), // Ensure expiresAt is a Date object
+  };
+
+
+  console.log(`Certificate generation successful for ${domain}. Backend message: ${certificate.message || 'None'}`);
+
+  // SECURITY WARNING: In a real app, the backend should NOT return the private key.
+  // It should store it securely server-side. The client might receive the public cert
+  // and instructions. We include it here only because the interface expects it.
+  if (!certificate.privateKeyPem) {
+       console.warn("Backend did not return private key (this is recommended practice).");
+       // Handle how the user gets/uses the key appropriately.
+       // For this example, we might need to adjust UI or provide instructions.
+       certificate.privateKeyPem = "Private key stored securely on server. See instructions.";
+  }
+
+
+  return certificate;
 }
 
 /**
- * Asynchronously triggers an immediate renewal of a Let's Encrypt certificate.
- * Usually, renewal happens automatically. This allows manual triggering.
- * The challenge type used for renewal typically matches the original generation method.
+ * Calls the backend API to trigger an immediate renewal of a Let's Encrypt certificate.
+ * The backend handles the renewal logic using stored information.
  *
- * @param certificate The existing certificate object containing domain and original challenge info.
+ * @param existingCertificate The existing certificate object (primarily need the domain).
  * @returns A promise that resolves to a Certificate object containing the renewed certificate details.
- * @throws Will throw an error if certificate renewal fails.
+ * @throws Will throw an error if the API call fails or the backend reports an error.
  */
-export async function renewCertificate(certificate: Certificate): Promise<Certificate> {
-   console.log(`Manually renewing certificate for ${certificate.domain} using original challenge type: ${certificate.challengeType.toUpperCase()}`);
+export async function renewCertificate(existingCertificate: Pick<Certificate, 'domain'>): Promise<Certificate> {
+   console.log(`Requesting certificate renewal for ${existingCertificate.domain} via API.`);
 
-   // --- Placeholder Implementation ---
-   // Backend retrieves necessary stored credentials based on the original challenge type (especially DNS config if DNS-01).
-   // Backend triggers renewal with the ACME client.
-
-   // Ensure required config is present for DNS-01 renewal
-   if (certificate.challengeType === 'dns-01' && !certificate.dnsConfig) {
-     throw new Error(`Cannot renew certificate for ${certificate.domain} using DNS-01: Original DNS config is missing.`);
-   }
-
-    // Simulate potential failure
-   if (certificate.domain.includes("renew-fail")) {
-       await new Promise(resolve => setTimeout(resolve, 500));
-       throw new Error(`Failed to renew certificate for ${certificate.domain}. Please check logs.`);
-   }
-
-    // Simulate success after a delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
-   const expiry = new Date();
-   expiry.setDate(expiry.getDate() + 90);
-
-   console.log(`Certificate renewal successful for ${certificate.domain}.`);
-
-   return {
-     ...certificate, // Keep original info like challenge type and DNS config
-     certificatePath: `/etc/letsencrypt/live/${certificate.domain}/fullchain.pem`, // Path likely remains the same
-     privateKeyPath: `/etc/letsencrypt/live/${certificate.domain}/privkey.pem`,   // Path likely remains the same
-     expiresAt: expiry, // Update expiry date
+   const requestData: RenewRequestData = {
+       domain: existingCertificate.domain,
    };
+
+  // --- Actual Backend API Call ---
+  // Replace '/api/renew-certificate' with your actual backend endpoint.
+  const response = await fetch('/api/renew-certificate', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestData),
+  });
+
+  if (!response.ok) {
+    let errorMessage = `API error: ${response.status} ${response.statusText}`;
+    try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorMessage;
+    } catch (e) {
+        // Ignore JSON parsing error
+    }
+    console.error("Certificate renewal API call failed:", errorMessage);
+    throw new Error(errorMessage);
+  }
+
+  const result = await response.json();
+   // Assuming the backend returns data conforming to the Certificate interface
+   const renewedCertificate: Certificate = {
+      ...result,
+      expiresAt: new Date(result.expiresAt), // Ensure expiresAt is a Date object
+  };
+
+   console.log(`Certificate renewal successful for ${existingCertificate.domain}. Backend message: ${renewedCertificate.message || 'None'}`);
+
+    // Apply same security warning as in generateCertificate
+   if (!renewedCertificate.privateKeyPem) {
+       console.warn("Backend did not return private key during renewal (recommended).");
+       renewedCertificate.privateKeyPem = "Private key stored securely on server. See instructions.";
+   }
+
+   return renewedCertificate;
 }
 
-    
+/**
+ * Calls the backend API to get the status of certificates (e.g., expiry dates).
+ * (Optional: Implement if needed to display a list of managed certificates).
+ */
+// export async function getCertificateStatus(): Promise<Certificate[]> {
+//    // ... Fetch status from a backend endpoint ...
+// }

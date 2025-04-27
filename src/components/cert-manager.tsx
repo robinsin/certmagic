@@ -7,12 +7,12 @@ import { CertStatus } from "@/components/cert-status";
 import { type Certificate, renewCertificate } from "@/services/cert-magic";
 import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Info } from "lucide-react";
+import { Info, ShieldCheck } from "lucide-react";
 
 export default function CertManager() {
   const [certificate, setCertificate] = React.useState<Certificate | null>(null);
   const [error, setError] = React.useState<string | null>(null);
-  const [isLoading, setIsLoading] = React.useState(false);
+  const [isLoading, setIsLoading] = React.useState(false); // Single loading state for form submission or renewal
   const { toast } = useToast();
 
   const handleCertificateGenerated = (
@@ -21,76 +21,70 @@ export default function CertManager() {
   ) => {
     setCertificate(generatedCertificate);
     setError(generationError || null);
+    // isLoading state is handled within CertForm for generation
   };
 
-  const handleRenew = async (certToRenew: Certificate) => {
-     if (!certToRenew) return; // Should not happen if button is shown
-
-     setIsLoading(true);
+  // Handler for manual renewal trigger
+  const handleRenew = async (certIdentifier: Pick<Certificate, 'domain'>) => {
+     setIsLoading(true); // Set loading state for renewal
      setError(null); // Clear previous errors
-     // Keep current cert display while renewing? Or clear? Let's keep it for now.
-     // setCertificate(null);
+     // Keep current cert displayed while renewing
 
      toast({
-         title: "Renewing Certificate...",
-         description: `Attempting to renew certificate for ${certToRenew.domain}.`,
+         title: "Requesting Renewal...",
+         description: `Sending renewal request for ${certIdentifier.domain} to the backend.`,
      });
 
      try {
-        // The certificate object should contain the necessary info (like original challenge type and DNS config if applicable)
-        // Simulate API call delay
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        // Call the service function which now calls the backend API for renewal
+        const renewedCertificate = await renewCertificate(certIdentifier);
 
-        // Pass the existing certificate object to the renewal function
-        const renewedCertificate = await renewCertificate(certToRenew);
-
-        setCertificate(renewedCertificate);
+        setCertificate(renewedCertificate); // Update display with renewed certificate details
         toast({
             title: "Renewal Successful!",
-            description: `Certificate for ${certToRenew.domain} has been renewed.`,
+            description: renewedCertificate.message || `Certificate for ${certIdentifier.domain} has been renewed.`,
             variant: "default",
+            duration: 10000,
         });
 
      } catch (renewalError) {
         console.error("Certificate renewal failed:", renewalError);
         const errorMessage = renewalError instanceof Error ? renewalError.message : "An unknown error occurred during renewal.";
-        setError(errorMessage);
-        // Restore the previous certificate state in case of failure? Or show error only? Show error only.
-        setCertificate(certToRenew); // Show the old cert again
+        setError(`Renewal failed: ${errorMessage}`); // Set error specific to renewal
+        // Optionally keep showing the old certificate or clear it based on preference
+        // setCertificate(null); // Or keep the old one displayed with error
         toast({
             title: "Renewal Failed",
             description: errorMessage,
             variant: "destructive",
         });
      } finally {
-         setIsLoading(false);
+         setIsLoading(false); // Reset loading state after renewal attempt
      }
   };
 
   return (
     <div className="w-full max-w-2xl flex flex-col items-center space-y-8">
-       <Alert className="w-full bg-secondary border-primary/30">
-          <Info className="h-4 w-4 text-primary" />
-          <AlertTitle className="text-primary">How Auto-Renewal Works</AlertTitle>
-          <AlertDescription>
-            CertMagic aims for automatic renewal. For DNS-01 challenge, it securely stores your DNS credentials (encrypted) to handle verification. For HTTP-01, your server must remain configured to serve the challenge files. DNS-01 is recommended for full automation.
+       <Alert className="w-full bg-secondary border-primary/30 shadow-sm rounded-lg">
+          <ShieldCheck className="h-5 w-5 text-primary" />
+          <AlertTitle className="font-semibold text-primary">Auto-Renewal & Security</AlertTitle>
+          <AlertDescription className="text-sm">
+            CertMagic's backend securely manages the certificate lifecycle. For <strong className="font-medium">DNS-01</strong>, we use your provided API keys (stored encrypted) for fully automatic renewals. For <strong className="font-medium">HTTP-01</strong>, ensure your server remains configured correctly for renewals. We prioritize security in handling your credentials and certificates.
           </AlertDescription>
         </Alert>
 
       <CertForm
         onCertificateGenerated={handleCertificateGenerated}
-        isLoading={isLoading}
-        setIsLoading={setIsLoading}
+        isLoading={isLoading} // Pass loading state to disable form submit while loading
+        setIsLoading={setIsLoading} // Allow form to control its own loading state
        />
 
       <CertStatus
         certificate={certificate}
         error={error}
         onRenew={handleRenew} // Pass the renewal handler
-        isLoading={isLoading} // Pass loading state to disable renew button while loading
+        isLoading={isLoading} // Pass loading state to disable renew button if needed
        />
     </div>
   );
 }
-
-    

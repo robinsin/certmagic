@@ -6,8 +6,8 @@ import { cn } from '@/lib/utils'; // Import cn utility
 const inter = Inter({ subsets: ['latin'], variable: '--font-sans' }); // Use Inter font
 
 export const metadata: Metadata = {
-  title: 'CertMagic - Effortless Certificates', // Updated title
-  description: 'Generate and auto-renew Let\'s Encrypt certificates easily.', // Updated description
+  title: 'CertMagic - Generate & Renew Let\'s Encrypt Certificates', // Updated title
+  description: 'A simple web interface to generate and automatically renew Let\'s Encrypt SSL/TLS certificates using DNS-01 or HTTP-01 challenges via a secure backend.', // Updated description
 };
 
 export default function RootLayout({
