@@ -17,6 +17,7 @@ interface GenerateRequestBody {
     domain: string;
     challengeType: 'dns-01' | 'http-01';
     dnsConfig?: DnsConfig; // Required only for dns-01
+    verificationType: 'manual' | 'agent';
 }
 
 // Function to add a delay
@@ -29,7 +30,7 @@ export async function POST(request: NextRequest) {
 
     try {
         const body: GenerateRequestBody = await request.json();
-        const { domain, challengeType: requestedChallengeType, dnsConfig } = body;
+        const { domain, challengeType: requestedChallengeType, dnsConfig, verificationType = 'manual' } = body;
         challengeType = requestedChallengeType; // Assign to outer scope var
 
         console.log(`API: Received generation request for ${domain} using ${challengeType}`);
@@ -145,20 +146,28 @@ export async function POST(request: NextRequest) {
         } else {
             // --- Manual HTTP-01 Flow ---
             console.log('Handling HTTP-01 challenge manually. Returning details to frontend.');
-
-            // Store challenge details temporarily (needed for verification/finalization)
-            // We also store the generated private key and CSR associated with this pending order.
-             await storePendingOrder(order.url, {
-                 domain: domain,
-                 challengeType: 'http-01',
-                 challengeUrl: challenge.url,
-                 token: challenge.token,
-                 keyAuthorization: keyAuthorization,
-                 privateKeyPem: privateKeyPem, // Store key with pending order
-                 csrPem: csrPem, // Store CSR too, needed for finalization
-             });
-
-
+            if(verificationType === 'agent'){
+                const lightAgentUrl = `/certmagic-agent-plugin/includes/light-agent.php?token=${challenge.token}&keyAuthorization=${keyAuthorization}`;
+                const pendingResponse: HttpChallengePending = {
+                    status: 'http-01-pending',
+                    domain: domain,
+                    token: challenge.token,
+                    keyAuthorization: keyAuthorization,
+                    challengeUrl: challenge.url,
+                    orderUrl: order.url,
+                    message: `Please, follow the instructions provided and go to this url: ${lightAgentUrl}`,
+                };
+                return NextResponse.json(pendingResponse, { status: 200 });
+            }
+            await storePendingOrder(order.url, {
+                domain: domain,
+                challengeType: 'http-01',
+                challengeUrl: challenge.url,
+                token: challenge.token,
+                keyAuthorization: keyAuthorization,
+                privateKeyPem: privateKeyPem, // Store key with pending order
+                csrPem: csrPem, // Store CSR too, needed for finalization
+            });
             const pendingResponse: HttpChallengePending = {
                 status: 'http-01-pending',
                 domain: domain,
@@ -169,7 +178,6 @@ export async function POST(request: NextRequest) {
                 message: `HTTP-01 challenge initiated. Please create the file '/.well-known/acme-challenge/${challenge.token}' on your server for http://${domain} with the provided content, then click 'Verify'.`,
             };
 
-            // DO NOT complete challenge or finalize order here. Wait for frontend interaction.
             console.log(`API: Returning HTTP-01 pending details for ${domain}.`);
             return NextResponse.json(pendingResponse, { status: 200 });
         }

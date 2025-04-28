@@ -1,5 +1,5 @@
 
-"use client";
+  "use client";
 
 import * as React from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -7,7 +7,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Globe, KeyRound, Loader2, Server, Sparkles, FileCode, AlertTriangle } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Form,
   FormControl,
@@ -16,6 +16,7 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
+  FormControl as FormControll,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import {
@@ -23,15 +24,21 @@ import {
     SelectContent,
     SelectItem,
     SelectTrigger,
-    SelectValue,
+    SelectValue
 } from "@/components/ui/select"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { generateCertificate, type DnsConfig, type CertificateResult } from "@/services/cert-magic"; // Removed unused types
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import Link from "next/link";
+
 
 const ChallengeType = z.enum(["dns-01", "http-01"]);
+
+const VerificationType = z.enum(["manual", "agent"]);
+
+
 
 const formSchema = z.object({
   domain: z.string().min(3, {
@@ -46,6 +53,7 @@ const formSchema = z.object({
   challengeType: ChallengeType.default("dns-01"),
   dnsProvider: z.string().optional(),
   apiKey: z.string().optional(),
+  verificationType: VerificationType.default("manual")
 }).superRefine((data, ctx) => {
   if (data.challengeType === "dns-01") {
     if (!data.dnsProvider) {
@@ -95,6 +103,7 @@ export function CertForm({ onCertificateGenerated }: CertFormProps) {
       challengeType: "dns-01",
       dnsProvider: "",
       apiKey: "",
+      verificationType: "manual",
     },
     mode: "onChange", // Validate on change for better UX
   });
@@ -173,6 +182,7 @@ export function CertForm({ onCertificateGenerated }: CertFormProps) {
   return (
     <Card className="w-full max-w-2xl shadow-lg border border-border rounded-lg">
       <CardHeader>
+
         <CardTitle className="flex items-center gap-2 text-2xl text-primary">
           <Sparkles className="h-6 w-6" /> Generate Certificate
         </CardTitle>
@@ -239,6 +249,52 @@ export function CertForm({ onCertificateGenerated }: CertFormProps) {
                  </FormItem>
                )}
              />
+
+             {watchedChallengeType === "http-01" && (
+              <FormField
+               control={form.control}
+               name="verificationType"
+               render={({ field }) => (
+                <FormItem className="space-y-3">
+                  <FormLabel className="font-semibold">HTTP-01 Verification</FormLabel>
+                  <FormControl>
+                    <RadioGroup onValueChange={field.onChange} defaultValue={field.value}>
+                      <div className="flex items-center space-x-2">
+                         <RadioGroupItem value="manual" id="manual" />
+                        <FormLabel htmlFor="manual" className="font-normal">Manual</FormLabel>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="agent" id="agent" />
+                        <FormLabel htmlFor="agent" className="font-normal">Light Agent</FormLabel>
+                       </div>
+                    </RadioGroup>
+                  </FormControl>
+                    {form.getValues('verificationType') === 'agent' && (
+                        <div className="text-sm">
+                            <Link
+                                href="/certmagic-agent-plugin/includes/light-agent.php"
+                                download
+                                className={buttonVariants({ variant: "link" })}
+                                >
+                                Download light-agent.php
+                            </Link><br/>
+                            <p>Download the light-agent.php script and upload it to the root directory of your web server. Make sure the .well-known/acme-challenge directory exists and is accessible. After adding the cert, the file will be automatically deleted.</p>
+                        </div>
+                    )}
+                    {form.getValues('verificationType') === 'manual' && form.getValues('challengeType') === "http-01" &&(
+                        <p className="text-sm">Place the verification file in the .well-known/acme-challenge directory of your web server.</p>
+                    )}
+
+                  <FormDescription>
+                    Choose how you want to perform the HTTP-01 challenge verification.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+               )}
+               />
+
+              )}
+
 
 
             {watchedChallengeType === "dns-01" && (
